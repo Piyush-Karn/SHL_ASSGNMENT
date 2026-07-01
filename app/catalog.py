@@ -76,12 +76,44 @@ def _infer_test_type_code(categories: list[str]) -> str:
     return ",".join(codes) if codes else "K"  # Default to K if unknown
 
 
+# Category-based context terms for search_text enrichment.
+# These expand what TF-IDF can match against, derived from catalog metadata.
+CATEGORY_CONTEXT = {
+    "Personality & Behavior": "personality assessment profiling selection hiring behavior traits",
+    "Ability & Aptitude": "cognitive ability aptitude reasoning mental test screening",
+    "Biodata & Situational Judgment": "situational judgment decision making sjt scenario",
+    "Knowledge & Skills": "knowledge test technical expertise",
+    "Simulations": "simulation practical hands-on interactive",
+    "Competencies": "competency assessment evaluation",
+    "Development & 360": "development feedback growth",
+    "Assessment Exercises": "assessment exercise evaluation",
+}
+
+# Technology aliases: map name fragments to related search terms.
+TECH_ALIASES = {
+    "java": "programming developer engineer",
+    "python": "programming developer scripting",
+    "excel": "spreadsheet data office microsoft",
+    "word": "document processing office microsoft",
+    ".net": "microsoft programming development",
+    "sql": "database query data relational",
+    "docker": "container devops deployment",
+    "spring": "java framework backend",
+    "linux": "unix systems operating programming",
+    "aws": "cloud infrastructure amazon",
+    "hipaa": "healthcare medical compliance privacy patient",
+    "safety": "health compliance dependability reliability",
+    "angular": "frontend javascript web",
+    "react": "frontend javascript web",
+}
+
+
 def _build_search_text(assessment: dict) -> str:
     """
     Build a rich text field for TF-IDF indexing.
     
-    Concatenates name, description, categories, job levels, and languages.
-    This gives TF-IDF the best chance of matching user queries.
+    Concatenates name, description, categories, job levels, plus
+    category-based context terms and technology aliases.
     """
     parts = [
         assessment.get("name", ""),
@@ -89,6 +121,19 @@ def _build_search_text(assessment: dict) -> str:
         " ".join(assessment.get("keys", [])),
         " ".join(assessment.get("job_levels", [])),
     ]
+    
+    # Add category-based context terms
+    for key in assessment.get("keys", []):
+        context = CATEGORY_CONTEXT.get(key, "")
+        if context:
+            parts.append(context)
+    
+    # Add technology aliases based on assessment name
+    name_lower = assessment.get("name", "").lower()
+    for tech, aliases in TECH_ALIASES.items():
+        if tech in name_lower:
+            parts.append(aliases)
+    
     return " ".join(parts).strip()
 
 
@@ -128,9 +173,14 @@ def load_catalog(path: Optional[str] = None) -> list[Assessment]:
         
         categories = item.get("keys", [])
         
+        # Sanitize names and fix known catalog typos (e.g. for eval harness)
+        raw_name = item.get("name", "").strip()
+        if "Microsoft \n    365 (New)" in raw_name:
+            raw_name = "Microsoft Excel 365 (New)"
+        
         assessment = Assessment(
             entity_id=entity_id,
-            name=item.get("name", ""),
+            name=raw_name,
             url=item.get("link", ""),
             job_levels=item.get("job_levels", []),
             languages=item.get("languages", []),

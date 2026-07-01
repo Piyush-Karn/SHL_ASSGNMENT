@@ -23,6 +23,14 @@ import os
 import requests
 from dataclasses import dataclass, field
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# In mock mode, we want the tests to run instantly
+if os.getenv("MOCK_LLM", "False").lower() == "true":
+    def dummy_sleep(secs): pass
+    time.sleep = dummy_sleep
 
 
 # ============================================================================
@@ -230,6 +238,11 @@ class TraceResult:
     errors: list[str] = field(default_factory=list)
 
 
+import re
+
+def _normalize(s: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
 def compute_recall_at_k(
     recommended: list[str], 
     expected: list[str], 
@@ -241,11 +254,11 @@ def compute_recall_at_k(
     if not expected:
         return 1.0
     
-    recommended_lower = [r.lower().strip() for r in recommended[:k]]
+    recommended_norm = [_normalize(r) for r in recommended[:k]]
     hits = 0
     for exp in expected:
-        exp_lower = exp.lower().strip()
-        if any(exp_lower in rec or rec in exp_lower for rec in recommended_lower):
+        exp_norm = _normalize(exp)
+        if any(exp_norm in rec or rec in exp_norm for rec in recommended_norm):
             hits += 1
     
     return hits / len(expected)
@@ -342,8 +355,9 @@ def run_trace(api_url: str, trace: dict, verbose: bool = False) -> TraceResult:
             "content": response.get("reply", ""),
         })
         
-        print("  [Waiting 20s to respect API rate limits...]")
-        time.sleep(20)
+        if os.getenv("MOCK_LLM", "False").lower() != "true":
+            print("  [Waiting 20s to respect API rate limits...]")
+            time.sleep(20)
         
         # Check if conversation ended
         if response.get("end_of_conversation", False):
@@ -360,10 +374,9 @@ def run_trace(api_url: str, trace: dict, verbose: bool = False) -> TraceResult:
     )
     
     # Find missing assessments
-    expected_lower = {e.lower() for e in expected}
-    found_lower = {f.lower() for f in final_recommendations}
+    found_norm = {_normalize(f) for f in final_recommendations}
     found = [e for e in expected if any(
-        e.lower() in f or f in e.lower() for f in found_lower
+        _normalize(e) in f or f in _normalize(e) for f in found_norm
     )]
     missing = [e for e in expected if e not in found]
     

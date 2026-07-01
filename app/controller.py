@@ -40,6 +40,43 @@ from app import config
 
 logger = logging.getLogger(__name__)
 
+TECH_ALIASES = {
+    "java": ["java"],
+    "spring": ["spring", "spring boot"],
+    "sql": ["sql"],
+    "aws": ["aws", "amazon web services", "amazon cloud", "ec2", "s3"],
+    "docker": ["docker"],
+    "c#": ["c#", "c sharp"],
+    ".net": [".net", "dotnet"],
+    "node.js": ["node.js", "node", "nodejs"],
+    "javascript": ["javascript", "js"],
+    "react": ["react", "react.js", "reactjs"],
+    "angular": ["angular"],
+    "kubernetes": ["kubernetes", "k8s"],
+    "azure": ["azure"],
+    "gcp": ["gcp", "google cloud"],
+    "mongodb": ["mongodb", "mongo"],
+    "postgresql": ["postgresql", "postgres"],
+    "rest": ["rest", "restful", "api"],
+    "graphql": ["graphql"],
+    "microservices": ["microservices", "microservice"],
+    "git": ["git"],
+    "linux": ["linux"],
+    "python": ["python"],
+    "tensorflow": ["tensorflow", "tf"],
+    "pytorch": ["pytorch"],
+    "excel": ["excel", "ms excel", "microsoft excel", "excel 365"],
+    "word": ["word", "ms word", "microsoft word", "word 365"],
+    "power bi": ["power bi", "powerbi"],
+    "cognitive": ["cognitive", "aptitude", "reasoning"],
+    "personality": ["personality", "behavior", "behaviour"],
+    "situational": ["situational judgement", "situational judgment", "sjt"],
+    "english": ["english"],
+    "spanish": ["spanish"],
+    "hipaa": ["hipaa"],
+    "safety": ["safety"]
+}
+
 
 def _count_turns(messages: list[dict]) -> int:
     """Count total turns (user + assistant messages)."""
@@ -142,6 +179,13 @@ def _is_confirmation(message: str) -> bool:
         r"\bkeep\b.*(as.is|the\s+list|shortlist)",
         r"\bfinal\s*(list|shortlist|battery)\b",
         r"\b(thanks|thank\s+you)\b",
+        r"\blooks\s+good\b",
+        r"\bgo\s+with\s+those\b",
+        r"\bthat's\s+perfect\b",
+        r"\bsounds\s+good\b",
+        r"\blooks\s+perfect\b",
+        r"\bclear\.?\s*we'll\s+use\b",
+        r"\bkeeping\b.*solutions\b",
     ]
     message_lower = message.lower()
     return any(re.search(p, message_lower) for p in confirm_patterns)
@@ -247,11 +291,33 @@ class ConversationController:
         
         analysis = self.llm.analyze_user_input(messages_dicts)
         slots_data = analysis.get("extracted_slots", {})
+        clarify_reply = analysis.get("clarify_reply", "")
         
         # Map back to ConversationSlots for strong typing
         slots = ConversationSlots(**slots_data)
-        logger.info(f"Extracted slots: role={slots.role}, skills={slots.skills}, seniority={slots.seniority}")
         
+        # --- Deterministic Skill & Seniority Extraction (JD Parsing Fix) ---
+        full_text = " ".join([m["content"].lower() for m in messages_dicts if m["role"] == "user"])
+        extracted_skills = set(slots.skills) if slots.skills else set()
+        
+        for canonical, aliases in TECH_ALIASES.items():
+            for alias in aliases:
+                # Use regex to find whole words only
+                if re.search(r'\b' + re.escape(alias) + r'\b', full_text):
+                    extracted_skills.add(canonical)
+                    break # if any alias matches, we add the canonical and move to next tech
+                    
+        slots.skills = list(extracted_skills)
+        
+        # Deterministic seniority extraction
+        seniority_keywords = ["entry-level", "entry level", "graduate", "junior", "mid", "senior", "executive", "manager", "director", "lead", "leadership", "plant operator", "admin", "assistant", "trainee"]
+        if not slots.seniority:
+            for kw in seniority_keywords:
+                if re.search(r'\b' + re.escape(kw) + r'\b', full_text):
+                    slots.seniority = kw
+                    break
+        
+        logger.info(f"Extracted slots: role={slots.role}, skills={slots.skills}, seniority={slots.seniority}")
         llm_intent = analysis.get("intent", "CLARIFY")
 
         # --- Step 3: Classify Intent ---
@@ -269,7 +335,7 @@ class ConversationController:
         elif intent == "RECOMMEND":
             return self._handle_recommendation(messages_dicts, slots)
         else:  # CLARIFY
-            return self._handle_clarification(messages_dicts, slots, turn_count)
+            return self._handle_clarification(messages_dicts, slots, turn_count, clarify_reply)
 
     def _classify_intent(
         self,
@@ -350,6 +416,7 @@ class ConversationController:
         messages: list[dict],
         slots: ConversationSlots,
         turn_count: int,
+        clarify_reply: str,
     ) -> ChatResponse:
         """
         Generate a clarifying question.
@@ -365,8 +432,11 @@ class ConversationController:
             # Can't determine what's missing — just recommend
             return self._handle_recommendation(messages, slots)
         
-        reply = self.llm.generate_clarification(messages, slots, missing_info)
-        
+        # Use the single-pass reply if provided
+        reply = clarify_reply.strip()
+        if not reply:
+            reply = f"Could you provide more details about the {', '.join(missing_info)}?"
+            
         return ChatResponse(
             reply=reply,
             recommendations=[],
@@ -399,6 +469,10 @@ class ConversationController:
         
         # Generate natural language response
         reply = self.llm.generate_recommendation(messages, slots, assessments)
+        
+        # Explicitly append assessment names to fix conversational amnesia
+        names_list = "\n".join([f"- {a.name}" for a in assessments])
+        reply = f"{reply}\n\nRecommended Assessments:\n{names_list}"
         
         # Build structured recommendations from catalog data (grounded!)
         recommendations = [a.to_recommendation() for a in assessments]
@@ -464,6 +538,10 @@ class ConversationController:
             changes_summary,
             assessments,
         )
+        
+        # Explicitly append assessment names to fix conversational amnesia
+        names_list = "\n".join([f"- {a.name}" for a in assessments])
+        reply = f"{reply}\n\nRecommended Assessments:\n{names_list}"
         
         recommendations = [a.to_recommendation() for a in assessments]
         
