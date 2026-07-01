@@ -135,7 +135,7 @@ RECOMMENDATION_PROMPT = """You are an SHL assessment consultant. Generate a reco
 
 ## Instructions:
 1. Write a brief consultative explanation of WHY these assessments fit (1-3 sentences)
-2. Do NOT list the assessments in your text — they will be shown separately in a structured format
+2. Briefly mention the exact names of the recommended assessments in your text response so the user knows what you picked. However, do NOT output their full descriptions or URLs in the text block.
 3. Be opinionated and expert. Explain the reasoning.
 4. If the catalog doesn't have an exact match for something, say so explicitly.
 5. Keep it concise — the user can see the full assessment details in the table.

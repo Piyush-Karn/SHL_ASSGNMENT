@@ -207,75 +207,49 @@ class RetrievalEngine:
     ) -> list[Assessment]:
         """
         Main retrieval method. Returns up to top_k assessments.
-        
-        Args:
-            slots: Extracted conversation slots
-            top_k: Max results to return (default: config.RERANK_TOP_K)
-            previous_recommendations: Names of previously recommended assessments
-                                       to boost in refinement scenarios
-        
-        Returns:
-            Ordered list of Assessment objects, best match first.
         """
         if not self._initialized:
             self.initialize()
         
-        top_k = top_k or config.RERANK_TOP_K
+        top_k = top_k or config.RERANK_TOP_K or 10
         query = self._build_query(slots)
         
-        if not query.strip():
+        # 1. Bridge the semantic gap using a lightweight synonym map
+        synonyms = {
+            "cognitive": "Verify G+ reasoning",
+            "situational judgement": "Scenarios",
+            "personality": "OPQ32r Occupational Personality Questionnaire",
+            "coding": "Automata",
+            "developer": "Automata",
+            "sales": "Sales"
+        }
+        
+        expanded_query = query.lower()
+        for key, val in synonyms.items():
+            if key in expanded_query:
+                expanded_query += f" {val}"
+                
+        if not expanded_query.strip():
             return []
-        
-        # --- Stage 1: TF-IDF Recall ---
-        query_vec = self._vectorizer.transform([query])
+            
+        # 2. Get TF-IDF scores for ALL items
+        query_vec = self._vectorizer.transform([expanded_query])
         tfidf_scores = cosine_similarity(query_vec, self._tfidf_matrix).flatten()
-        
-        # Get top TFIDF_TOP_K candidates
-        recall_k = config.TFIDF_TOP_K
-        top_indices = np.argsort(tfidf_scores)[-recall_k:][::-1]
         
         candidates = [
             (self._catalog[i], float(tfidf_scores[i]))
-            for i in top_indices
-            if tfidf_scores[i] > 0.0  # Only items with some TF-IDF relevance
+            for i in range(len(self._catalog))
+            if tfidf_scores[i] > 0.0
         ]
         
-        if not candidates:
-            # Fallback: if TF-IDF found nothing, return top items by any signal
-            logger.warning(f"TF-IDF returned no candidates for query: {query[:100]}")
-            return []
+        # Sort all by score first
+        candidates.sort(key=lambda x: x[1], reverse=True)
         
-        # --- Apply hard filters ---
-        candidates = self._apply_filters(candidates, slots)
-        
-        # --- Stage 2: Semantic Reranking ---
-        if self._embedder is not None and self._assessment_embeddings is not None:
-            query_embedding = self._embedder.encode(
-                [query], 
-                normalize_embeddings=True,
-                show_progress_bar=False,
-            )
+        # 3. Apply hard filters (seniority, category, etc.) to the ENTIRE valid set
+        if slots:
+            candidates = self._apply_filters(candidates, slots)
             
-            reranked = []
-            for assessment, tfidf_score in candidates:
-                idx = self._catalog.index(assessment)
-                sem_score = float(
-                    cosine_similarity(
-                        query_embedding, 
-                        self._assessment_embeddings[idx:idx+1]
-                    )[0][0]
-                )
-                # Hybrid score
-                hybrid_score = (
-                    config.TFIDF_WEIGHT * tfidf_score 
-                    + config.SEMANTIC_WEIGHT * sem_score
-                )
-                reranked.append((assessment, hybrid_score))
-            
-            reranked.sort(key=lambda x: x[1], reverse=True)
-            candidates = reranked
-        
-        # --- Boost previously recommended assessments ---
+        # --- Boost previously recommended assessments (from original implementation) ---
         if previous_recommendations:
             prev_names_lower = {n.lower() for n in previous_recommendations}
             boosted = []
@@ -286,45 +260,28 @@ class RetrievalEngine:
                     boosted.append((assessment, score))
             boosted.sort(key=lambda x: x[1], reverse=True)
             candidates = boosted
+            
+        # 4. Truncate to top K ONLY AFTER filtering is done
+        candidates = candidates[:top_k]
         
-        # --- Return top_k ---
-        results = [a for a, _ in candidates[:top_k]]
-        logger.info(
-            f"Retrieved {len(results)} assessments for query: {query[:80]}..."
-        )
+        results = [c[0] for c in candidates]
+        logger.info(f"Retrieved {len(results)} assessments for query: {expanded_query[:80]}...")
         return results
     
     def find_by_names(self, names: list[str]) -> list[Assessment]:
         """
-        Find assessments by name (fuzzy matching).
-        Used for comparison requests where user mentions specific assessments.
+        Helper method to force exact additions into the recommendations.
         """
         if not self._initialized:
             self.initialize()
-        
+            
         results = []
         for name in names:
-            name_lower = name.lower().strip()
-            best_match = None
-            best_score = 0
-            
-            for assessment in self._catalog:
-                a_name_lower = assessment.name.lower()
-                # Exact match
-                if a_name_lower == name_lower:
-                    best_match = assessment
-                    break
-                # Partial match (e.g., "OPQ" matches "Occupational Personality Questionnaire OPQ32r")
-                if name_lower in a_name_lower or a_name_lower in name_lower:
-                    # Score by length similarity
-                    score = len(name_lower) / max(len(a_name_lower), 1)
-                    if score > best_score:
-                        best_score = score
-                        best_match = assessment
-            
-            if best_match and best_match not in results:
-                results.append(best_match)
-        
+            for item in self._catalog:
+                # Substring match to catch partial mentions
+                if name.lower() in item.name.lower():
+                    if item not in results:
+                        results.append(item)
         return results
 
 

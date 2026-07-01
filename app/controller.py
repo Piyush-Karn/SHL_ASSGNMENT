@@ -412,17 +412,10 @@ class ConversationController:
         slots: ConversationSlots,
     ) -> ChatResponse:
         """
-        Handle user request to modify existing recommendations.
-        
-        Strategy:
-        - Extract what to add/remove from slots
-        - Re-retrieve with updated slots
-        - Boost previously recommended items (continuity)
+        Handles explicit additions and merges them with standard retrieval.
         """
-        # Get previous recommendation names for context
         prev_rec_names = self._extract_recommendation_names(messages)
         
-        # Build changes summary
         changes = []
         if slots.additions:
             changes.append(f"Adding: {', '.join(slots.additions)}")
@@ -430,20 +423,29 @@ class ConversationController:
             changes.append(f"Removing: {', '.join(slots.removals)}")
         changes_summary = "; ".join(changes) if changes else "Updating based on new constraints"
         
-        # Re-retrieve with updated slots, boosting previous recommendations
-        assessments = self.retrieval.retrieve(
-            slots,
-            top_k=config.RERANK_TOP_K,
-            previous_recommendations=prev_rec_names,
-        )
+        # 1. Force the explicitly requested additions
+        added_assessments = []
+        if slots.additions:
+            added_assessments = self.retrieval.find_by_names(slots.additions)
+        
+        # 2. Get standard retrieved candidates
+        retrieved_candidates = self.retrieval.retrieve(slots)
         
         # Apply explicit removals
         if slots.removals:
             removal_lower = [r.lower() for r in slots.removals]
-            assessments = [
-                a for a in assessments
+            retrieved_candidates = [
+                a for a in retrieved_candidates
                 if not any(r in a.name.lower() for r in removal_lower)
             ]
+            
+        # 3. Combine them, putting explicit additions at the top, avoiding duplicates
+        final_assessments = added_assessments.copy()
+        for candidate in retrieved_candidates:
+            if candidate not in final_assessments:
+                final_assessments.append(candidate)
+                
+        assessments = final_assessments[:config.MAX_RECOMMENDATIONS]
         
         if not assessments:
             return ChatResponse(
@@ -451,8 +453,6 @@ class ConversationController:
                 recommendations=[],
                 end_of_conversation=False,
             )
-        
-        assessments = assessments[:config.MAX_RECOMMENDATIONS]
         
         # Generate response
         reply = self.llm.generate_refinement(
@@ -544,35 +544,29 @@ class ConversationController:
 
     def _extract_recommendation_names(self, messages: list[dict]) -> list[str]:
         """
-        Extract assessment names from previous assistant messages.
-        
-        Looks for SHL catalog URLs and assessment name patterns.
+        Extracts assessment names from the previous LLM response by matching 
+        text against the catalog names, rather than looking for URLs.
         """
-        names = []
-        # Look at assistant messages in reverse (most recent first)
+        extracted_names = []
+        if not messages: 
+            return []
+            
+        # Get the text of the last message sent by the assistant
+        last_agent_message = ""
         for msg in reversed(messages):
             if msg.get("role") == "assistant":
-                content = msg.get("content", "")
-                # Look for patterns like "Name: XXX" or assessment names before URLs
-                # This is a heuristic — works with our response format
-                url_pattern = re.findall(
-                    r'https://www\.shl\.com/products/product-catalog/view/[^/\s)]+/',
-                    content,
-                )
-                if url_pattern:
-                    # Found URLs — look up assessment names from catalog
-                    from app.catalog import get_assessment_by_url
-                    for url in url_pattern:
-                        url = url.rstrip('/')
-                        if not url.endswith('/'):
-                            url += '/'
-                        assessment = get_assessment_by_url(url)
-                        if assessment and assessment.name not in names:
-                            names.append(assessment.name)
-                    if names:
-                        break  # Use the most recent set
-        
-        return names
+                last_agent_message = msg.get("content", "")
+                break
+                
+        if not last_agent_message:
+            return []
+            
+        # Match against the catalog
+        for item in self.retrieval._catalog:
+            if item.name.lower() in last_agent_message.lower():
+                extracted_names.append(item.name)
+                
+        return extracted_names
 
     def _extract_comparison_subjects(
         self, message: str, slots: ConversationSlots
