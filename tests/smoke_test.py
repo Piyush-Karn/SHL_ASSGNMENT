@@ -1,9 +1,11 @@
 """Quick smoke test for the API endpoints."""
 import sys, os
-sys.stdout.reconfigure(encoding='utf-8')
-os.environ['GEMINI_API_KEY'] = os.environ.get('GEMINI_API_KEY', 'test_key')
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from dotenv import load_dotenv
 
+load_dotenv()
+assert os.getenv("GEMINI_API_KEY"), "Missing GEMINI_API_KEY"
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.main import app
 from fastapi.testclient import TestClient
 
