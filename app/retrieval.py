@@ -249,8 +249,27 @@ class RetrievalEngine:
         }
         
         expanded_query = query.lower()
-        for key, value in domain_map.items():
-            if key in expanded_query:
+        
+        # Make matching more robust for alternative spellings and partial matches
+        robust_keys = {
+            "senior leadership": ["leadership", "cxo", "director"],
+            "management trainees": ["management trainee", "graduate management"],
+            "rust": ["rust"],
+            "full-stack": ["full-stack", "full stack"],
+            "contact centre": ["contact centre", "contact center", "call center", "call centre"],
+            "financial": ["financial", "finance", "accounting"],
+            "sales": ["sales"],
+            "safety": ["safety", "plant operator", "chemical facility"],
+            "healthcare admin": ["healthcare", "health care", "medical", "patient", "hipaa"],
+            "admin assistant": ["admin assistant", "administrative", "admin"],
+            "cognitive": ["cognitive", "reasoning"],
+            "personality": ["personality"],
+            "situational": ["situational", "judgement"]
+        }
+        
+        for map_key, value in domain_map.items():
+            synonyms = robust_keys.get(map_key, [map_key])
+            if any(syn in expanded_query for syn in synonyms):
                 # Add the mapped terms multiple times to heavily skew TF-IDF scoring
                 expanded_query += f" {value} {value} {value}"
                 
