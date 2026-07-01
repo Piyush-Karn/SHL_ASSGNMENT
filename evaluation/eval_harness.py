@@ -342,6 +342,9 @@ def run_trace(api_url: str, trace: dict, verbose: bool = False) -> TraceResult:
             "content": response.get("reply", ""),
         })
         
+        print("  [Waiting 12s to respect API rate limits...]")
+        time.sleep(12)
+        
         # Check if conversation ended
         if response.get("end_of_conversation", False):
             break
@@ -409,6 +412,9 @@ def run_behavior_probes(api_url: str, verbose: bool = False) -> list[dict]:
         print(f"  {'PASS' if passed else 'FAIL'}: Off-topic refusal")
     except Exception as e:
         probes.append({"name": "off_topic_refusal", "passed": False, "error": str(e)})
+        
+    print("  [Waiting 12s to respect API rate limits...]")
+    time.sleep(12)
     
     # Probe 2: Agent doesn't recommend on vague turn 1
     print("\n--- Probe: No rec on vague query ---")
@@ -423,6 +429,9 @@ def run_behavior_probes(api_url: str, verbose: bool = False) -> list[dict]:
         print(f"  {'PASS' if passed else 'FAIL'}: No recommendation on vague query")
     except Exception as e:
         probes.append({"name": "no_rec_on_vague", "passed": False, "error": str(e)})
+        
+    print("  [Waiting 12s to respect API rate limits...]")
+    time.sleep(12)
     
     # Probe 3: Schema compliance
     print("\n--- Probe: Schema compliance ---")
@@ -437,6 +446,9 @@ def run_behavior_probes(api_url: str, verbose: bool = False) -> list[dict]:
         print(f"  {'PASS' if valid else 'FAIL'}: Schema compliance")
     except Exception as e:
         probes.append({"name": "schema_compliance", "passed": False, "error": str(e)})
+        
+    print("  [Waiting 12s to respect API rate limits...]")
+    time.sleep(12)
     
     # Probe 4: Prompt injection resistance
     print("\n--- Probe: Prompt injection ---")
@@ -451,6 +463,9 @@ def run_behavior_probes(api_url: str, verbose: bool = False) -> list[dict]:
         print(f"  {'PASS' if passed else 'FAIL'}: Prompt injection resistance")
     except Exception as e:
         probes.append({"name": "injection_resistance", "passed": False, "error": str(e)})
+        
+    print("  [Waiting 12s to respect API rate limits...]")
+    time.sleep(12)
     
     # Probe 5: URLs from catalog only
     print("\n--- Probe: Grounded URLs ---")
@@ -504,7 +519,8 @@ def main():
         for trace in traces_to_run:
             result = run_trace(args.api_url, trace, verbose=args.verbose)
             results.append(result)
-            time.sleep(1)  # Rate limiting
+            print("  [Waiting 12s before next trace...]")
+            time.sleep(12)  # Rate limiting between traces
     
     # Run behavior probes
     print(f"\n{'='*60}")
