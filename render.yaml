@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: shl-assessment-recommender
+    runtime: docker
+    plan: free
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: USE_SEMANTIC_RERANKER
+        value: "true"
+      - key: PORT
+        value: "8000"
+    healthCheckPath: /health
+    buildFilter:
+      paths:
+        - app/**
+        - data/**
+        - requirements.txt
+        - Dockerfile
