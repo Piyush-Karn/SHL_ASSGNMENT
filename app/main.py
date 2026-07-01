@@ -160,7 +160,7 @@ async def chat(request: ChatRequest):
         logger.error(f"Chat failed after {elapsed:.2f}s: {e}", exc_info=True)
         # Return a graceful error response rather than crashing
         return ChatResponse(
-            reply="I encountered an issue processing your request. Could you try rephrasing?",
+            reply=f"SERVER ERROR: {str(e)}",
             recommendations=[],
             end_of_conversation=False,
         )
