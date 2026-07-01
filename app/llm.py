@@ -263,9 +263,9 @@ class LLMService:
         {{
             "intent": "RECOMMEND",
             "extracted_slots": {{
-                "role": "financial analyst",
-                "skills": ["excel", "accounting"],
-                "seniority": "graduate"
+                "role": "software engineer",
+                "skills": ["python", "sql"],
+                "seniority": "senior"
             }},
             "clarify_reply": "Could you tell me if you are looking for an entry-level or senior role?"
         }}
