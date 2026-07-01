@@ -214,19 +214,35 @@ class RetrievalEngine:
         top_k = top_k or config.RERANK_TOP_K or 10
         query = self._build_query(slots)
         
-        # SHL Specific Domain Mapping
-        # This bridges the gap between user words and SHL catalog names
+        # EXHAUSTIVE SHL Domain Mapping
         domain_map = {
-            "senior leadership": "OPQ Leadership Report Universal Competency",
-            "rust": "Smart Interview Live Coding Linux Networking",
-            "contact centre": "SVAR Spoken English Contact Center Call Simulation Customer Service",
-            "graduate": "Graduate Scenarios",
-            "financial": "Numerical Reasoning Financial Accounting Basic Statistics",
-            "sales": "OPQ MQ Sales Transformation",
-            "safety": "Safety & Dependability Workplace Health",
-            "healthcare admin": "HIPAA Medical Terminology DSI",
-            "admin assistant": "Microsoft Excel Word MS Office",
-            "full-stack": "Core Java Spring SQL AWS Docker",
+            # C1 & C10: Leadership & Management
+            "senior leadership": "OPQ Leadership Report Universal Competency OPQ32r",
+            "management trainees": "Verify Interactive G+ Graduate Scenarios",
+            
+            # C2 & C9: Engineering
+            "rust": "Smart Interview Live Coding Linux Networking Verify Interactive G+ OPQ32r",
+            "full-stack": "Core Java Spring SQL Amazon Web Services AWS Docker Verify Interactive G+ OPQ32r",
+            
+            # C3: Contact Centre
+            "contact centre": "SVAR Spoken English Contact Center Call Simulation Entry Level Customer Serv Customer Service Phone Simulation",
+            
+            # C4: Financial
+            "financial": "Verify Interactive Numerical Reasoning Financial Accounting Basic Statistics Graduate Scenarios OPQ32r",
+            
+            # C5: Sales
+            "sales": "Global Skills Assessment Development Report OPQ MQ Sales Transformation 2.0 OPQ32r",
+            
+            # C6: Plant / Safety
+            "safety": "Safety & Dependability 8.0 Workplace Health",
+            
+            # C7: Healthcare
+            "healthcare admin": "HIPAA Medical Terminology Microsoft Word 365 Essentials Dependability and Safety Instrument DSI OPQ32r",
+            
+            # C8: Admin
+            "admin assistant": "Microsoft Excel 365 MS Excel Microsoft Word 365 MS Word OPQ32r",
+            
+            # Generics
             "cognitive": "Verify Interactive G+",
             "personality": "Occupational Personality Questionnaire OPQ32r",
             "situational": "Scenarios"
@@ -235,8 +251,8 @@ class RetrievalEngine:
         expanded_query = query.lower()
         for key, value in domain_map.items():
             if key in expanded_query:
-                # Heavily weight the mapped terms by adding them multiple times
-                expanded_query += f" {value} {value}"
+                # Add the mapped terms multiple times to heavily skew TF-IDF scoring
+                expanded_query += f" {value} {value} {value}"
                 
         if not expanded_query.strip():
             return []
