@@ -239,18 +239,24 @@ class ConversationController:
                 end_of_conversation=False,
             )
 
-        # --- Step 2: Extract Slots ---
+        # --- Step 2: Analyze Input (Combined LLM Call) ---
         messages_dicts = [{"role": m.get("role", m.role if hasattr(m, 'role') else "user"), 
                            "content": m.get("content", m.content if hasattr(m, 'content') else "")} 
                           if isinstance(m, dict) else {"role": m.role, "content": m.content}
                           for m in messages]
         
-        slots = self.llm.extract_slots(messages_dicts)
+        analysis = self.llm.analyze_user_input(messages_dicts)
+        slots_data = analysis.get("extracted_slots", {})
+        
+        # Map back to ConversationSlots for strong typing
+        slots = ConversationSlots(**slots_data)
         logger.info(f"Extracted slots: role={slots.role}, skills={slots.skills}, seniority={slots.seniority}")
+        
+        llm_intent = analysis.get("intent", "CLARIFY")
 
         # --- Step 3: Classify Intent ---
         # Use both pattern matching and LLM classification
-        intent = self._classify_intent(last_user_msg, messages_dicts, turn_count, slots)
+        intent = self._classify_intent(last_user_msg, messages_dicts, turn_count, slots, llm_intent)
         logger.info(f"Intent: {intent}, Turn: {turn_count}")
 
         # --- Step 4: Route to Handler ---
@@ -271,6 +277,7 @@ class ConversationController:
         messages: list[dict],
         turn_count: int,
         slots: ConversationSlots,
+        llm_intent: str,
     ) -> str:
         """
         Hybrid intent classification: pattern matching + LLM.
@@ -309,21 +316,17 @@ class ConversationController:
             return "RECOMMEND"
         
         # Check via LLM for edge cases
-        try:
-            llm_intent = self.llm.classify_intent(messages)
-            if llm_intent in ("CONFIRM", "COMPARE", "REFINE"):
-                return llm_intent
-            if llm_intent == "CLARIFY_RESPONSE":
-                # User answered our question — re-evaluate if we have enough now
-                if _has_sufficient_context(slots):
-                    return "RECOMMEND"
-                # Still not enough — but check turn budget
-                if turn_count >= 4:
-                    return "RECOMMEND"
-                return "CLARIFY"
-        except Exception:
-            pass
-        
+        if llm_intent in ("CONFIRM", "COMPARE", "REFINE"):
+            return llm_intent
+        if llm_intent == "CLARIFY_RESPONSE":
+            # User answered our question — re-evaluate if we have enough now
+            if _has_sufficient_context(slots):
+                return "RECOMMEND"
+            # Still not enough — but check turn budget
+            if turn_count >= 4:
+                return "RECOMMEND"
+            return "CLARIFY"
+            
         return "CLARIFY"
 
     def _has_previous_recommendations(self, messages: list[dict]) -> bool:

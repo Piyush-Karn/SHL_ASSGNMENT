@@ -87,6 +87,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Initialize THIS globally so the models and catalog load only once!
+# This single change will make your API instantly respond.
+controller = ConversationController()
+
 
 # --- Endpoints ---
 
@@ -125,17 +129,20 @@ async def chat(request: ChatRequest):
                 end_of_conversation=False,
             )
 
-        # Check turn count
+        # Check turn limits before doing ANY LLM work
         total_turns = len(request.messages)
-        if total_turns > config.MAX_TURNS:
+        if total_turns >= config.MAX_TURNS:
             logger.warning(f"Turn count {total_turns} exceeds max {config.MAX_TURNS}")
-            # Still process but note we're over limit
+            return ChatResponse(
+                reply="We've reached the maximum number of messages for this session. Please review the assessments recommended above, or start a new chat!",
+                recommendations=[],
+                end_of_conversation=True
+            )
 
         # Convert to dicts for processing
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-        # Process through controller
-        controller = ConversationController()
+        # Process through the global controller
         response = controller.process(messages)
 
         elapsed = time.time() - start_time

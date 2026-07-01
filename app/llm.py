@@ -68,6 +68,7 @@ class LLMService:
     def __init__(self):
         if not config.GEMINI_API_KEY:
             logger.warning("GEMINI_API_KEY not set — LLM calls will fail")
+        print(f"API KEY IN USE: {str(config.GEMINI_API_KEY)[:8]}...")
         genai.configure(api_key=config.GEMINI_API_KEY)
         # Pass the system prompt here so it's baked into every call made by
         # this model instance — previously it was accepted as a parameter but
@@ -83,6 +84,7 @@ class LLMService:
         system_prompt: str = SYSTEM_PROMPT,
         temperature: float = 0.3,
         max_tokens: int = 1024,
+        json_mode: bool = False,
     ) -> str:
         """
         Make a Gemini API call.
@@ -92,12 +94,16 @@ class LLMService:
         for behavior probes.
         """
         try:
+            gen_config_kwargs = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+            if json_mode:
+                gen_config_kwargs["response_mime_type"] = "application/json"
+                
             response = self._model.generate_content(
                 prompt,
-                generation_config=genai.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens,
-                ),
+                generation_config=genai.GenerationConfig(**gen_config_kwargs),
                 safety_settings=_SAFETY_SETTINGS,
             )
 
@@ -122,6 +128,44 @@ class LLMService:
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
+
+    def analyze_user_input(self, messages: list[dict]) -> dict:
+        """
+        Combines Intent Classification and Slot Extraction into a SINGLE API call.
+        """
+        history = format_conversation(messages[:-1]) if len(messages) > 1 else "None"
+        user_message = messages[-1].get("content", "") if messages else ""
+        
+        prompt = f"""
+        Analyze the user's message and the conversation history.
+        1. Classify the intent as one of: CLARIFY, RECOMMEND, REFINE, COMPARE, CONFIRM, OFF_TOPIC.
+        2. Extract any specific job roles, skills, or seniority levels mentioned.
+        
+        Return ONLY valid JSON in this exact format:
+        {{
+            "intent": "RECOMMEND",
+            "extracted_slots": {{
+                "role": "financial analyst",
+                "skills": ["excel", "accounting"],
+                "seniority": "graduate"
+            }}
+        }}
+        
+        History: {history}
+        User: {user_message}
+        """
+        response_text = self._call_llm(prompt, temperature=0.1, json_mode=True)
+        try:
+            # Clean up response just in case SDK didn't enforce valid JSON fully
+            cleaned = response_text.strip()
+            if cleaned.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+            return json.loads(cleaned)
+        except Exception as e:
+            logger.error(f"Failed to parse analyze_user_input JSON: {e}")
+            logger.debug(f"Raw response: {response_text[:500]}")
+            return {"intent": "CLARIFY", "extracted_slots": {}}
 
     def extract_slots(self, messages: list[dict]) -> ConversationSlots:
         """

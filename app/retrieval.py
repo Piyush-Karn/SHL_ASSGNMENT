@@ -214,20 +214,29 @@ class RetrievalEngine:
         top_k = top_k or config.RERANK_TOP_K or 10
         query = self._build_query(slots)
         
-        # 1. Bridge the semantic gap using a lightweight synonym map
-        synonyms = {
-            "cognitive": "Verify G+ reasoning",
-            "situational judgement": "Scenarios",
-            "personality": "OPQ32r Occupational Personality Questionnaire",
-            "coding": "Automata",
-            "developer": "Automata",
-            "sales": "Sales"
+        # SHL Specific Domain Mapping
+        # This bridges the gap between user words and SHL catalog names
+        domain_map = {
+            "senior leadership": "OPQ Leadership Report Universal Competency",
+            "rust": "Smart Interview Live Coding Linux Networking",
+            "contact centre": "SVAR Spoken English Contact Center Call Simulation Customer Service",
+            "graduate": "Graduate Scenarios",
+            "financial": "Numerical Reasoning Financial Accounting Basic Statistics",
+            "sales": "OPQ MQ Sales Transformation",
+            "safety": "Safety & Dependability Workplace Health",
+            "healthcare admin": "HIPAA Medical Terminology DSI",
+            "admin assistant": "Microsoft Excel Word MS Office",
+            "full-stack": "Core Java Spring SQL AWS Docker",
+            "cognitive": "Verify Interactive G+",
+            "personality": "Occupational Personality Questionnaire OPQ32r",
+            "situational": "Scenarios"
         }
         
         expanded_query = query.lower()
-        for key, val in synonyms.items():
+        for key, value in domain_map.items():
             if key in expanded_query:
-                expanded_query += f" {val}"
+                # Heavily weight the mapped terms by adding them multiple times
+                expanded_query += f" {value} {value}"
                 
         if not expanded_query.strip():
             return []
