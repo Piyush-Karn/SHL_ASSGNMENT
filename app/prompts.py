@@ -85,7 +85,7 @@ INTENT_CLASSIFICATION_PROMPT = """Given this conversation, classify the intent o
 - CLARIFY_RESPONSE: User is answering a clarifying question the agent asked
 - REFINE: User wants to modify existing recommendations (add, remove, swap assessments)
 - COMPARE: User wants to compare two or more specific assessments
-- CONFIRM: User is accepting/confirming the current recommendations
+- CONFIRM: User is accepting/confirming the current recommendations. Examples: "I approve these", "Looks good", "That works", "Confirmed", "Yes, go ahead", "Looks perfect", "Clear. We'll use X"
 - OFF_TOPIC: User is asking something unrelated to SHL assessments
 - GREET: User is greeting or making small talk
 

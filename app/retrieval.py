@@ -363,7 +363,8 @@ class RetrievalEngine:
         if slots.other_context:
             parts.append(slots.other_context)
 
-        query = " ".join(parts)
+        query = " ".join(parts).lower()
+        query = query.replace("c++", "cpp cplusplus").replace("c#", "csharp")
         return query if query.strip() else "assessment"
 
     def _get_domain_context(self, query: str) -> tuple[str, list[str]]:

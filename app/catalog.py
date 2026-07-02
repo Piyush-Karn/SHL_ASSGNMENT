@@ -105,6 +105,8 @@ TECH_ALIASES = {
     "safety": "health compliance dependability reliability",
     "angular": "frontend javascript web",
     "react": "frontend javascript web",
+    "c++": "cpp cplusplus",
+    "c#": "csharp",
 }
 
 

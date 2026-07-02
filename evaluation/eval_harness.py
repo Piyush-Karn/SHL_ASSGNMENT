@@ -221,6 +221,58 @@ TRACES = [
         "should_clarify_first": False,
         "should_end": True,
     },
+    {
+        "id": "C11",
+        "description": "Unseen: Frontend Web Developer",
+        "messages_to_send": [
+            "We're hiring a Frontend Web Developer. They will be working purely in the browser with HTML5 and Javascript.",
+            "Mid-level.",
+            "Yes, looks good.",
+        ],
+        "expected_assessments": [
+            "HTML5 (New)",
+            "JavaScript (New)",
+            "Automata Front End",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+        "should_clarify_first": True,
+        "should_end": True,
+    },
+    {
+        "id": "C12",
+        "description": "Unseen: Data Scientist",
+        "messages_to_send": [
+            "I need to assess a Data Scientist candidate. They need strong Python and data science modeling skills.",
+            "Can you make sure we have a hands-on coding simulation for data science specifically?",
+            "Looks perfect.",
+        ],
+        "expected_assessments": [
+            "Data Science (New)",
+            "Python (New)",
+            "Automata Data Science (New)",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+        "should_clarify_first": False,
+        "should_end": True,
+    },
+    {
+        "id": "C13",
+        "description": "Unseen: Senior C++ Engineer",
+        "messages_to_send": [
+            "Senior C++ Engineer for our quantitative trading systems. Needs to be expert at C++ and Linux.",
+            "I approve these.",
+        ],
+        "expected_assessments": [
+            "C++ Programming (New)",
+            "Linux Programming (General)",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+        "should_clarify_first": False,
+        "should_end": True,
+    },
 ]
 
 
