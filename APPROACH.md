@@ -66,7 +66,7 @@ The system was rigorously evaluated using an automated testing harness simulatin
 
 | Metric | Result |
 | :--- | :--- |
-| Recall@10 | 1.000 |
+| Recall@10 | 0.952 |
 | Schema Compliance | 10/10 |
 | Behavior Probes | 5/5 |
 | End of Conversation | 10/10 |
