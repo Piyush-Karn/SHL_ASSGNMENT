@@ -14,8 +14,43 @@ load_dotenv()
 # --- LLM Configuration ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_BACKUP_KEY = os.getenv("MISTRAL_BACKUP_KEY", "")
+MISTRAL_KEYS = [
+    os.getenv("MISTRAL_API_KEY"),
+    os.getenv("MISTRAL_BACKUP_KEY"),
+    os.getenv("MISTRAL_THIRD_KEY"),
+    os.getenv("MISTRAL_FOURTH_KEY"),
+    os.getenv("MISTRAL_FIFTH_KEY"),
+    os.getenv("MISTRAL_SIXTH_KEY"),
+]
+MISTRAL_KEYS = [k for k in MISTRAL_KEYS if k]
+
+GROQ_KEYS = [
+    os.getenv("GROQ_API_KEY"),
+    os.getenv("GROQ_SECOND_API_KEY"),
+    os.getenv("GROQ_THIRD_API_KEY"),
+    os.getenv("GROQ_FOURTH_API_KEY"),
+    os.getenv("GROQ_FIFTH_API_KEY"),
+    os.getenv("GROQ_SIXTH_API_KEY"),
+]
+GROQ_KEYS = [k for k in GROQ_KEYS if k and k.startswith("gsk_")] # Filter out the mistaken paste
+
+GEMINI_KEYS = [
+    os.getenv("GEMINI_API_KEY"),
+    os.getenv("GEMINI_SECOND_KEY"),
+    os.getenv("GEMINI_THIRD_KEY"),
+    os.getenv("GEMINI_FOURTH_KEY"),
+    os.getenv("GEMINI_FIFTH_KEY"),
+    os.getenv("GEMINI_SIXTH_KEY"),
+    os.getenv("GEMINI_SEVENTH_KEY"),
+]
+GEMINI_KEYS = [k for k in GEMINI_KEYS if k]
+
+HUGGING_FACE_KEYS = [
+    os.getenv("HUGGING_FACE_API"),
+    os.getenv("HUGGING_FACE_API_SECOND"),
+]
+HUGGING_FACE_KEYS = [k for k in HUGGING_FACE_KEYS if k]
+
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 # --- Catalog ---

@@ -69,6 +69,7 @@ def _freeze_messages(messages: list[dict]) -> tuple:
     return tuple(tuple(sorted(m.items())) for m in messages)
 
 _last_mistral_call_time = 0
+_call_counter = 0
 
 class LLMService:
     """
@@ -77,12 +78,12 @@ class LLMService:
 
     def __init__(self):
         provider = config.LLM_PROVIDER
-        
-        if provider == "mistral":
-            if not config.MISTRAL_API_KEY:
-                logger.warning("MISTRAL_API_KEY not set — LLM calls will fail")
-            else:
-                print(f"API KEY IN USE (MISTRAL): {str(config.MISTRAL_API_KEY)[:8]}...")
+        if provider == "mistral" or provider == "round_robin":
+            num_mistral = len(config.MISTRAL_KEYS)
+            num_groq = len(config.GROQ_KEYS)
+            num_gemini = len(config.GEMINI_KEYS)
+            num_hf = len(config.HUGGING_FACE_KEYS)
+            print(f"API KEY IN USE (ROUND ROBIN): {num_groq}x Groq + {num_mistral}x Mistral + {num_gemini}x Gemini + {num_hf}x HuggingFace")
         else:
             if not config.GEMINI_API_KEY:
                 logger.warning("GEMINI_API_KEY not set — LLM calls will fail")
@@ -211,10 +212,12 @@ class LLMService:
             return cache[cache_key]
 
         # Route to correct provider
-        if provider == "mistral":
-            response_text = self._call_mistral(prompt, temperature, max_tokens, json_mode)
+        if provider == "mistral" or provider == "round_robin":
+            response_text = self._call_round_robin(prompt, temperature, max_tokens, json_mode)
         else:
-            response_text = self._call_gemini(prompt, temperature, max_tokens, json_mode)
+            if not config.GEMINI_KEYS:
+                raise ValueError("No Gemini keys found")
+            response_text = self._call_gemini_raw(prompt, temperature, max_tokens, json_mode, config.GEMINI_KEYS[0])
             
         # --- Save to Cache ---
         cache[cache_key] = response_text
@@ -227,25 +230,95 @@ class LLMService:
             
         return response_text
 
-    def _call_mistral(
+    def _call_round_robin(self, prompt: str, temperature: float, max_tokens: int, json_mode: bool) -> str:
+        global _call_counter
+        
+        gemini_list = [("gemini", key, f"Gemini Key {i+1}") for i, key in enumerate(config.GEMINI_KEYS)]
+        groq_list = [("groq", key, f"Groq Key {i+1}") for i, key in enumerate(config.GROQ_KEYS)]
+        hf_list = [("huggingface", key, f"HF Key {i+1}") for i, key in enumerate(config.HUGGING_FACE_KEYS)]
+        mistral_list = [("mistral", key, f"Mistral Key {i+1}") for i, key in enumerate(config.MISTRAL_KEYS)]
+        
+        # Interleave providers so we don't hammer the same model concurrently
+        import itertools
+        providers = []
+        for g, q, h, m in itertools.zip_longest(gemini_list, groq_list, hf_list, mistral_list):
+            if g: providers.append(g)
+            if q: providers.append(q)
+            if h: providers.append(h)
+            if m: providers.append(m)
+            
+        if not providers:
+            raise ValueError("No API keys configured for Round Robin")
+            
+        # Global LLM deadline to prevent stacking timeouts (24 seconds max allowed here)
+        import time
+        start_time = time.time()
+            
+        # Try up to the number of available providers
+        for attempt in range(len(providers)):
+            if time.time() - start_time > 22.0:
+                logger.error("Round Robin aborted: Reached strict 22s time budget limit!")
+                break
+                
+            provider_type, api_key, label = providers[_call_counter % len(providers)]
+            _call_counter += 1
+            
+            try:
+                if provider_type == "groq":
+                    return self._call_groq_raw(prompt, temperature, max_tokens, json_mode, api_key)
+                elif provider_type == "mistral":
+                    return self._call_mistral_raw(prompt, temperature, max_tokens, json_mode, api_key)
+                elif provider_type == "gemini":
+                    return self._call_gemini_raw(prompt, temperature, max_tokens, json_mode, api_key)
+                elif provider_type == "huggingface":
+                    return self._call_hf_raw(prompt, temperature, max_tokens, json_mode, api_key)
+            except Exception as e:
+                logger.warning(f"Round Robin: {label} failed with error: {e}. Trying next...")
+                
+        raise ValueError(f"All round-robin providers failed or time budget exceeded!")
+
+    def _call_groq_raw(self, prompt: str, temperature: float, max_tokens: int, json_mode: bool, api_key: str) -> str:
+        if not api_key:
+            raise ValueError("Groq API key not set")
+            
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+            
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=12)
+        
+        if response.status_code != 200:
+            raise ValueError(f"Groq API failed: {response.text}")
+            
+        return response.json()["choices"][0]["message"]["content"]
+
+    def _call_mistral_raw(
         self,
         prompt: str,
-        temperature: float = 0.3,
-        max_tokens: int = 1024,
-        json_mode: bool = False,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool,
+        api_key: str
     ) -> str:
-        global _last_mistral_call_time
-        if not config.MISTRAL_API_KEY:
-            raise ValueError("MISTRAL_API_KEY not set")
-
-        # Enforce 3-second delay for Mistral 1 RPS limit
-        now = time.time()
-        elapsed = now - _last_mistral_call_time
-        if elapsed < 3.0:
-            time.sleep(3.0 - elapsed)
+        if not api_key:
+            raise ValueError("Mistral API key not set")
 
         headers = {
-            "Authorization": f"Bearer {config.MISTRAL_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
@@ -265,77 +338,107 @@ class LLMService:
         response = requests.post(
             "https://api.mistral.ai/v1/chat/completions",
             headers=headers,
-            json=payload
+            json=payload,
+            timeout=12
         )
         
-        _last_mistral_call_time = time.time()
-        
         if response.status_code != 200:
-            logger.warning(f"Mistral API failed with main key. Trying backup key... Error: {response.text}")
-            
-            if config.MISTRAL_BACKUP_KEY:
-                # Add a 1s delay just to be safe if the primary key failed
-                time.sleep(1.0)
-                headers["Authorization"] = f"Bearer {config.MISTRAL_BACKUP_KEY}"
-                
-                response = requests.post(
-                    "https://api.mistral.ai/v1/chat/completions",
-                    headers=headers,
-                    json=payload
-                )
-                
-                _last_mistral_call_time = time.time()
-                
-            if response.status_code != 200:
-                raise ValueError(f"Mistral API failed with both main and backup keys: {response.text}")
+            raise ValueError(f"Mistral API failed: {response.text}")
             
         return response.json()["choices"][0]["message"]["content"]
 
-    def _call_gemini(
+    def _call_gemini_raw(
         self,
         prompt: str,
-        temperature: float = 0.3,
-        max_tokens: int = 1024,
-        json_mode: bool = False,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool,
+        api_key: str
     ) -> str:
-        """
-        Make a Gemini API call.
+        if not api_key:
+            raise ValueError("Gemini API key not set")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.GEMINI_MODEL}:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
         
-        Low temperature (0.3) for consistent, predictable outputs.
-        Higher temperature would make responses more creative but less reliable
-        for behavior probes.
-        """
-        try:
-            gen_config_kwargs = {
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "generationConfig": {
                 "temperature": temperature,
-                "max_output_tokens": max_tokens,
-            }
-            if json_mode:
-                gen_config_kwargs["response_mime_type"] = "application/json"
-                
-            response = self._model.generate_content(
-                prompt,
-                generation_config=genai.GenerationConfig(**gen_config_kwargs),
-                safety_settings=_SAFETY_SETTINGS,
-            )
-
-            if not response.candidates:
-                raise ValueError(
-                    "Gemini returned no candidates — possible safety block even "
-                    "with BLOCK_NONE settings (check quota or model availability)."
-                )
-            finish_reason = response.candidates[0].finish_reason
-            if finish_reason == 2:
-                raise ValueError(
-                    f"Gemini blocked this prompt (finish_reason=SAFETY). "
-                    f"Prompt prefix: {prompt[:120]!r}"
-                )
-
-            return response.text.strip()
+                "maxOutputTokens": max_tokens,
+            },
+            "safetySettings": [
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+            ]
+        }
+        
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
             
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            raise
+        response = requests.post(url, headers=headers, json=payload, timeout=12)
+        
+        if response.status_code != 200:
+            raise ValueError(f"Gemini API failed: {response.text}")
+            
+        data = response.json()
+        if not data.get("candidates"):
+            raise ValueError(f"Gemini returned no candidates (possible safety block). Response: {response.text}")
+            
+        candidate = data["candidates"][0]
+        if candidate.get("finishReason") == "SAFETY":
+            raise ValueError(f"Gemini blocked this prompt due to safety. Prompt prefix: {prompt[:120]!r}")
+            
+        return candidate["content"]["parts"][0]["text"].strip()
+
+    def _call_hf_raw(
+        self,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        json_mode: bool,
+        api_key: str
+    ) -> str:
+        if not api_key:
+            raise ValueError("Hugging Face API key not set")
+
+        url = "https://router.huggingface.co/featherless-ai/v1/completions"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Format the messages exactly as Llama-3 expects
+        # <|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system_prompt}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user_prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n
+        llama_prompt = (
+            f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
+            f"{SYSTEM_PROMPT}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n"
+            f"{prompt}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+        )
+        
+        if json_mode:
+            llama_prompt += "```json\n{"
+            
+        payload = {
+            "model": "meta-llama/Meta-Llama-3.1-8B",
+            "prompt": llama_prompt,
+            "temperature": max(temperature, 0.01), # HF fails on 0.0
+            "max_tokens": max_tokens
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=12)
+        
+        if response.status_code != 200:
+            raise ValueError(f"HuggingFace API failed: {response.text}")
+            
+        result = response.json()["choices"][0]["text"].strip()
+        if json_mode:
+            result = "{" + result # We forced the prompt to start with {
+            
+        return result
 
     def analyze_user_input(self, messages: list[dict]) -> dict:
         """
