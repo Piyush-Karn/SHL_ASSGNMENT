@@ -76,9 +76,19 @@ class LLMService:
     """
 
     def __init__(self):
-        if not config.GEMINI_API_KEY:
-            logger.warning("GEMINI_API_KEY not set — LLM calls will fail")
-        print(f"API KEY IN USE: {str(config.GEMINI_API_KEY)[:8]}...")
+        provider = config.LLM_PROVIDER
+        
+        if provider == "mistral":
+            if not config.MISTRAL_API_KEY:
+                logger.warning("MISTRAL_API_KEY not set — LLM calls will fail")
+            else:
+                print(f"API KEY IN USE (MISTRAL): {str(config.MISTRAL_API_KEY)[:8]}...")
+        else:
+            if not config.GEMINI_API_KEY:
+                logger.warning("GEMINI_API_KEY not set — LLM calls will fail")
+            else:
+                print(f"API KEY IN USE (GEMINI): {str(config.GEMINI_API_KEY)[:8]}...")
+                
         genai.configure(api_key=config.GEMINI_API_KEY)
         # Pass the system prompt here so it's baked into every call made by
         # this model instance — previously it was accepted as a parameter but
@@ -261,7 +271,22 @@ class LLMService:
         _last_mistral_call_time = time.time()
         
         if response.status_code != 200:
-            raise ValueError(f"Mistral API failed: {response.text}")
+            logger.warning(f"Mistral API failed with main key. Trying backup key... Error: {response.text}")
+            
+            # Add backup key logic
+            backup_key = "MTMkprUCxmGVxxV5g1XOUDMlaoNloucu"
+            headers["Authorization"] = f"Bearer {backup_key}"
+            
+            response = requests.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            
+            _last_mistral_call_time = time.time()
+            
+            if response.status_code != 200:
+                raise ValueError(f"Mistral API failed with both main and backup keys: {response.text}")
             
         return response.json()["choices"][0]["message"]["content"]
 
