@@ -78,6 +78,69 @@ TECH_ALIASES = {
     "safety": ["safety"]
 }
 
+TECH_ALIAS_REGEXES = {
+    canonical: [re.compile(r'\b' + re.escape(alias) + r'\b') for alias in aliases]
+    for canonical, aliases in TECH_ALIASES.items()
+}
+
+SENIORITY_KEYWORDS = ["entry-level", "entry level", "graduate", "junior", "mid", "senior", "executive", "manager", "director", "lead", "leadership", "plant operator", "admin", "assistant", "trainee"]
+SENIORITY_REGEXES = {kw: re.compile(r'\b' + re.escape(kw) + r'\b') for kw in SENIORITY_KEYWORDS}
+
+COMPARE_PATTERNS = [re.compile(p) for p in [
+    r"(what('s| is) the )?difference between",
+    r"compare\b",
+    r"comparison\b",
+    r"different from",
+    r"how (does|do) .+ (differ|compare)",
+    r"vs\.?\b",
+    r"versus\b",
+    r"which (one|is better)",
+]]
+
+REFINE_PATTERNS = [re.compile(p) for p in [
+    r"\badd\b",
+    r"\bdrop\b",
+    r"\bremove\b",
+    r"\breplace\b",
+    r"\bswap\b",
+    r"\binclude\b",
+    r"\bexclude\b",
+    r"\bchange\b",
+    r"\bupdate\b",
+    r"\balso\b.*(add|include)",
+    r"\binstead\b",
+    r"\bactually\b",
+]]
+
+CONFIRM_PATTERNS = [re.compile(p) for p in [
+    r"\bperfect\b",
+    r"\bconfirm(ed)?\b",
+    r"\bapprove(d)?\b",
+    r"\block(ing|ed)?\s*(it)?\s*(in)?\b",
+    r"\bthat('s| is)?\s*(good|great|fine|what we need|exactly)",
+    r"\bthat\s+works\b",
+    r"\bthat\s+covers\s+it\b",
+    r"\bgood\s*(to\s+go)?\b",
+    r"\blooks?\s+(good|perfect|great|fine)\b",
+    r"\byes\b.*(go\s+ahead|proceed|finalize)",
+    r"\bkeep\b.*(as.is|the\s+list|shortlist)",
+    r"\bfinal\s*(list|shortlist|battery)\b",
+    r"\b(thanks|thank\s+you)\b",
+    r"\blooks\s+good\b",
+    r"\bgo\s+with\s+those\b",
+    r"\bthat's\s+perfect\b",
+    r"\bsounds\s+good\b",
+    r"\blooks\s+perfect\b",
+    r"\bclear\.?\s*we'll\s+use\b",
+    r"\bkeeping\b.*solutions\b",
+]]
+
+# Precompile comparison extraction regexes
+RE_BETWEEN_AND = re.compile(r'between\s+(.+?)\s+and\s+(.+?)[\?\.]?\s*$', re.IGNORECASE)
+RE_DIFFERENT_FROM = re.compile(r'(.+?)\s+different\s+from\s+(.+?)[\?\.]?\s*$', re.IGNORECASE)
+RE_VS = re.compile(r'(.+?)\s+vs\.?\s+(.+?)[\?\.]?\s*$', re.IGNORECASE)
+
+
 
 def _count_turns(messages: list[dict]) -> int:
     """Count total turns (user + assistant messages)."""
@@ -116,18 +179,8 @@ def _is_comparison_request(message: str) -> bool:
     - C5: "What's the difference between OPQ and OPQ MQ Sales Report?"
     - C6: "What's the difference between the DSI and the Safety & Dependability 8.0?"
     """
-    compare_patterns = [
-        r"(what('s| is) the )?difference between",
-        r"compare\b",
-        r"comparison\b",
-        r"different from",
-        r"how (does|do) .+ (differ|compare)",
-        r"vs\.?\b",
-        r"versus\b",
-        r"which (one|is better)",
-    ]
     message_lower = message.lower()
-    return any(re.search(p, message_lower) for p in compare_patterns)
+    return any(p.search(message_lower) for p in COMPARE_PATTERNS)
 
 
 def _is_refinement_request(message: str) -> bool:
@@ -140,22 +193,8 @@ def _is_refinement_request(message: str) -> bool:
     - C9: "Add AWS and Docker. Drop REST"
     - C10: "can you remove the OPQ32r"
     """
-    refine_patterns = [
-        r"\badd\b",
-        r"\bdrop\b",
-        r"\bremove\b",
-        r"\breplace\b",
-        r"\bswap\b",
-        r"\binclude\b",
-        r"\bexclude\b",
-        r"\bchange\b",
-        r"\bupdate\b",
-        r"\balso\b.*(add|include)",
-        r"\binstead\b",
-        r"\bactually\b",
-    ]
     message_lower = message.lower()
-    return any(re.search(p, message_lower) for p in refine_patterns)
+    return any(p.search(message_lower) for p in REFINE_PATTERNS)
 
 
 def _is_confirmation(message: str) -> bool:
@@ -168,30 +207,8 @@ def _is_confirmation(message: str) -> bool:
     - C3: "Perfect — new simulation for volume, old solution for finalists. Confirmed."
     - C9: "Keep Verify G+. Locking it in."
     """
-    confirm_patterns = [
-        r"\bperfect\b",
-        r"\bconfirm(ed)?\b",
-        r"\bapprove(d)?\b",
-        r"\block(ing|ed)?\s*(it)?\s*(in)?\b",
-        r"\bthat('s| is)?\s*(good|great|fine|what we need|exactly)",
-        r"\bthat\s+works\b",
-        r"\bthat\s+covers\s+it\b",
-        r"\bgood\s*(to\s+go)?\b",
-        r"\blooks?\s+(good|perfect|great|fine)\b",
-        r"\byes\b.*(go\s+ahead|proceed|finalize)",
-        r"\bkeep\b.*(as.is|the\s+list|shortlist)",
-        r"\bfinal\s*(list|shortlist|battery)\b",
-        r"\b(thanks|thank\s+you)\b",
-        r"\blooks\s+good\b",
-        r"\bgo\s+with\s+those\b",
-        r"\bthat's\s+perfect\b",
-        r"\bsounds\s+good\b",
-        r"\blooks\s+perfect\b",
-        r"\bclear\.?\s*we'll\s+use\b",
-        r"\bkeeping\b.*solutions\b",
-    ]
     message_lower = message.lower()
-    return any(re.search(p, message_lower) for p in confirm_patterns)
+    return any(p.search(message_lower) for p in CONFIRM_PATTERNS)
 
 
 def _determine_missing_info(slots: ConversationSlots) -> str:
@@ -307,20 +324,19 @@ class ConversationController:
         full_text = " ".join([m["content"].lower() for m in messages_dicts if m["role"] == "user"])
         extracted_skills = set(slots.skills) if slots.skills else set()
         
-        for canonical, aliases in TECH_ALIASES.items():
-            for alias in aliases:
-                # Use regex to find whole words only
-                if re.search(r'\b' + re.escape(alias) + r'\b', full_text):
+        for canonical, regexes in TECH_ALIAS_REGEXES.items():
+            for regex in regexes:
+                # Use precompiled regex to find whole words only
+                if regex.search(full_text):
                     extracted_skills.add(canonical)
                     break # if any alias matches, we add the canonical and move to next tech
                     
         slots.skills = list(extracted_skills)
         
         # Deterministic seniority extraction
-        seniority_keywords = ["entry-level", "entry level", "graduate", "junior", "mid", "senior", "executive", "manager", "director", "lead", "leadership", "plant operator", "admin", "assistant", "trainee"]
         if not slots.seniority:
-            for kw in seniority_keywords:
-                if re.search(r'\b' + re.escape(kw) + r'\b', full_text):
+            for kw, regex in SENIORITY_REGEXES.items():
+                if regex.search(full_text):
                     slots.seniority = kw
                     break
         
@@ -678,31 +694,19 @@ class ConversationController:
         subjects = []
         
         # Try pattern: "between X and Y"
-        match = re.search(
-            r'between\s+(.+?)\s+and\s+(.+?)[\?\.]?\s*$',
-            message,
-            re.IGNORECASE,
-        )
+        match = RE_BETWEEN_AND.search(message)
         if match:
             subjects = [match.group(1).strip(), match.group(2).strip()]
             return subjects
         
         # Try pattern: "X different from Y"
-        match = re.search(
-            r'(.+?)\s+different\s+from\s+(.+?)[\?\.]?\s*$',
-            message,
-            re.IGNORECASE,
-        )
+        match = RE_DIFFERENT_FROM.search(message)
         if match:
             subjects = [match.group(1).strip(), match.group(2).strip()]
             return subjects
         
         # Try pattern: "X vs Y"
-        match = re.search(
-            r'(.+?)\s+vs\.?\s+(.+?)[\?\.]?\s*$',
-            message,
-            re.IGNORECASE,
-        )
+        match = RE_VS.search(message)
         if match:
             subjects = [match.group(1).strip(), match.group(2).strip()]
             return subjects

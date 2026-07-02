@@ -89,6 +89,7 @@ class Assessment(BaseModel):
     categories: list[str] = Field(default_factory=list)  # renamed from 'keys'
     test_type_code: str = ""           # Inferred: K, P, A, B, etc.
     search_text: str = ""              # Concatenated text for TF-IDF indexing
+    name_lower: str = ""               # Precomputed lowercase name for fuzzy matching
 
     def to_recommendation(self) -> Recommendation:
         """Convert to API recommendation format."""

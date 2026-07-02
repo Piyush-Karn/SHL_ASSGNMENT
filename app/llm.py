@@ -23,6 +23,7 @@ import re
 import time
 import requests
 from typing import Optional
+from functools import lru_cache
 
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
@@ -61,6 +62,11 @@ from app.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+PROMPT_VERSION = 1
+
+def _freeze_messages(messages: list[dict]) -> tuple:
+    return tuple(tuple(sorted(m.items())) for m in messages)
 
 _last_mistral_call_time = 0
 
@@ -309,6 +315,16 @@ class LLMService:
         """
         Combines Intent Classification and Slot Extraction into a SINGLE API call.
         """
+        # --- Create Cache Key ---
+        frozen = _freeze_messages(messages)
+        cache_key = (PROMPT_VERSION, frozen)
+        return self._cached_analyze_user_input(cache_key, frozen)
+
+    @lru_cache(maxsize=500)
+    def _cached_analyze_user_input(self, cache_key: tuple, frozen_messages: tuple) -> dict:
+        # Convert frozen tuple back to list of dicts for processing
+        messages = [dict(m) for m in frozen_messages]
+        
         history = format_conversation(messages[:-1]) if len(messages) > 1 else "None"
         user_message = messages[-1].get("content", "") if messages else ""
         

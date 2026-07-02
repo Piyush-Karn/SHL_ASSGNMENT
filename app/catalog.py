@@ -194,6 +194,7 @@ def load_catalog(path: Optional[str] = None) -> list[Assessment]:
             categories=categories,
             test_type_code=_infer_test_type_code(categories),
             search_text=_build_search_text(item),
+            name_lower=raw_name.lower()
         )
         
         assessments.append(assessment)

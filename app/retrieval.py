@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Optional
+from functools import lru_cache
+
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from typing import Optional
 
 from app.models import Assessment, ConversationSlots
 from app.catalog import get_catalog
@@ -201,17 +203,6 @@ DOMAIN_CONTEXT = {
             "Occupational Personality Questionnaire OPQ32r",
         ],
     },
-    "full-stack": {
-        "boost_terms": "java spring sql aws docker rest full-stack software engineer",
-        "must_include": [
-            "Core Java (Advanced Level) (New)",
-            "Spring (New)",
-            "SQL (New)",
-            "Amazon Web Services (AWS) Development (New)",
-            "Docker (New)",
-            "SHL Verify Interactive G+",
-        ],
-    },
     "cognitive": {
         "boost_terms": "verify interactive reasoning aptitude ability cognitive",
         "must_include": ["SHL Verify Interactive G+"],
@@ -223,16 +214,6 @@ DOMAIN_CONTEXT = {
     "situational": {
         "boost_terms": "judgment scenarios decision making graduate",
         "must_include": ["Graduate Scenarios"],
-    },
-    "sales": {
-        "boost_terms": "sales transformation global skills assessment mq sales report motivators",
-        "must_include": [
-            "Global Skills Assessment",
-            "Global Skills Development Report",
-            "Occupational Personality Questionnaire OPQ32r",
-            "OPQ MQ Sales Report",
-            "Sales Transformation 2.0 - Individual Contributor",
-        ],
     },
     "technical": {
         "boost_terms": "programming coding software cognitive personality opq verify",
@@ -282,6 +263,11 @@ class RetrievalEngine:
         self._tfidf_matrix = None
         self._embedder = None
         self._assessment_embeddings = None
+        
+        # Precomputed lookup tables
+        self._name_to_assessment = {}
+        self._norm_to_assessment = {}
+        
         self._initialized = False
 
     def initialize(self):
@@ -321,10 +307,16 @@ class RetrievalEngine:
                     normalize_embeddings=True,
                 )
                 logger.info(f"Semantic embeddings computed: {self._assessment_embeddings.shape}")
-            except Exception as e:
-                logger.warning(f"Semantic reranker unavailable: {e}. Falling back to TF-IDF only.")
-                self._embedder = None
-                self._assessment_embeddings = None
+            except ImportError:
+                logger.warning("sentence-transformers not installed; semantic reranking disabled")
+                config.USE_SEMANTIC_RERANKER = False
+        
+        # --- Stage 3: Precompute exact lookup tables ---
+        for item in self._catalog:
+            item_lower = item.name_lower.strip()
+            self._name_to_assessment[item_lower] = item
+            item_norm = re.sub(r'[^a-z0-9]', '', item_lower)
+            self._norm_to_assessment[item_norm] = item
 
         self._initialized = True
         logger.info("Retrieval engine initialized")
@@ -401,26 +393,27 @@ class RetrievalEngine:
         query_vec = self._vectorizer.transform([query])
         return cosine_similarity(query_vec, self._tfidf_matrix).flatten()
 
+    @lru_cache(maxsize=1024)
+    def _encode_query(self, query: str):
+        """Cached embedding generation for identical queries."""
+        if self._embedder is None:
+            return None
+        return self._embedder.encode([query], normalize_embeddings=True)
+
     def _semantic_score(self, query: str) -> np.ndarray:
         """Score all catalog items via semantic similarity."""
         if self._embedder is None or self._assessment_embeddings is None:
             return np.zeros(len(self._catalog))
 
-        query_embedding = self._embedder.encode(
-            [query],
-            normalize_embeddings=True,
-        )
+        query_embedding = self._encode_query(query)
         return cosine_similarity(query_embedding, self._assessment_embeddings).flatten()
 
-    def _rrf_fusion(self, tfidf_scores: np.ndarray, semantic_scores: np.ndarray, k: int = 60) -> np.ndarray:
-        """
-        Reciprocal Rank Fusion of TF-IDF and semantic rankings.
+    @lru_cache(maxsize=1024)
+    def _get_rrf_scores(self, base_query: str, expanded_query: str, k: int = 60) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Cached RRF fusion scores for identical base/expanded query pairs."""
+        tfidf_scores = self._tfidf_score(expanded_query)
+        semantic_scores = self._semantic_score(base_query)
 
-        RRF_score(d) = 1/(k + rank_tfidf(d)) + 1/(k + rank_semantic(d))
-
-        Better than weighted average because it handles different score
-        scales naturally and is more robust to outliers.
-        """
         n = len(self._catalog)
 
         # Compute ranks (1-indexed, lower = better)
@@ -436,7 +429,7 @@ class RetrievalEngine:
 
         # RRF scores
         rrf_scores = 1.0 / (k + tfidf_ranks) + 1.0 / (k + semantic_ranks)
-        return rrf_scores
+        return rrf_scores, tfidf_scores, semantic_scores
 
     # ------------------------------------------------------------------
     # Filtering and post-processing
@@ -489,7 +482,7 @@ class RetrievalEngine:
             removal_names_lower = [r.lower() for r in slots.removals]
             filtered = [
                 (a, s) for a, s in filtered
-                if not any(r in a.name.lower() for r in removal_names_lower)
+                if not any(r in a.name_lower for r in removal_names_lower)
             ]
 
         return filtered
@@ -501,28 +494,22 @@ class RetrievalEngine:
     ) -> list[tuple[Assessment, float]]:
         """
         Remove near-duplicate assessments, keeping the highest-scored one.
-
-        Uses SequenceMatcher ratio on lowercased names. Threshold of 0.82
-        correctly deduplicates:
-        - "Enterprise Leadership Report 1.0" vs "2.0" (ratio ~0.94)
-        - "OPQ Premium Plus Report" vs "OPQ Premium Plus Report 2.0" (~0.92)
-        - "Verify Interactive G+ Report" vs "...Candidate Report" (~0.83)
-
-        But preserves genuinely different assessments:
-        - "Microsoft Excel 365 (New)" vs "...Essentials (New)" (~0.79)
-        - "MS Excel (New)" vs "MS Word (New)" (~0.67)
         """
         from difflib import SequenceMatcher
 
         if not candidates:
             return candidates
 
+        # Group by name similarity
         selected = []
-        for assessment, score in candidates:
-            name_lower = assessment.name.lower()
+        # Sort by score descending first to prioritize best matches
+        sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
+        
+        for assessment, score in sorted_candidates:
+            name_lower = assessment.name_lower
             is_dup = False
             for existing, _ in selected:
-                sim = SequenceMatcher(None, name_lower, existing.name.lower()).ratio()
+                sim = SequenceMatcher(None, name_lower, existing.name_lower).ratio()
                 if sim > threshold:
                     is_dup = True
                     break
@@ -543,16 +530,6 @@ class RetrievalEngine:
     ) -> list[Assessment]:
         """
         Main retrieval method. Returns up to top_k assessments.
-
-        Pipeline:
-        1. Build query with synonym expansion
-        2. Get domain context (boost_terms + must_include names)
-        3. Score via TF-IDF (expanded query) and semantic (base query)
-        4. RRF fusion of both score sets
-        5. Build candidate list, apply hard filters
-        6. Deduplicate near-similar names
-        7. Inject must-include assessments by direct name lookup
-        8. Return top-k
         """
         if not self._initialized:
             self.initialize()
@@ -569,12 +546,11 @@ class RetrievalEngine:
         if not expanded_query.strip():
             return []
 
-        # 3. Score via TF-IDF and semantic
-        tfidf_scores = self._tfidf_score(expanded_query)
-        semantic_scores = self._semantic_score(base_query)
-
-        # 4. RRF fusion
-        rrf_scores = self._rrf_fusion(tfidf_scores, semantic_scores)
+        # 3 & 4. Score queries (cached RRF fusion)
+        rrf_scores, tfidf_scores, semantic_scores = self._get_rrf_scores(base_query, expanded_query)
+        
+        # MUST copy the cached rrf_scores array because we mutate it below!
+        rrf_scores = rrf_scores.copy()
 
         # Apply variant penalties to prefer canonical assessments
         for i, a in enumerate(self._catalog):
@@ -584,12 +560,9 @@ class RetrievalEngine:
             elif "report" in name_lower:
                 rrf_scores[i] -= 0.02
 
-        # 5. Build candidate list (nonzero TF-IDF or significant semantic score)
+        # 5. Extract top candidates
         candidates = []
         for i in range(len(self._catalog)):
-            # Use un-penalized score for threshold, but penalize the final candidate score
-            # or just use the penalized score if > 0.
-            # We'll just check original scores for filtering
             if tfidf_scores[i] > 0 or semantic_scores[i] > 0.15:
                 candidates.append((self._catalog[i], float(rrf_scores[i])))
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -602,7 +575,7 @@ class RetrievalEngine:
             prev_names_lower = {n.lower() for n in previous_recommendations}
             boosted = []
             for assessment, score in candidates:
-                if assessment.name.lower() in prev_names_lower:
+                if assessment.name_lower in prev_names_lower:
                     boosted.append((assessment, score + 0.5))
                 else:
                     boosted.append((assessment, score))
@@ -642,10 +615,8 @@ class RetrievalEngine:
 
     def find_by_names(self, names: list[str]) -> list[Assessment]:
         """
-        Look up assessments by name with prioritized matching:
-        1. Exact match (case-insensitive)
-        2. Normalized match (strip non-alphanumeric)
-        3. Substring match (fallback)
+        Look up assessments by name using precomputed dictionaries.
+        O(1) exact and normalized lookups.
         """
         if not self._initialized:
             self.initialize()
@@ -653,33 +624,28 @@ class RetrievalEngine:
         results = []
         for name in names:
             name_lower = name.lower().strip()
+            
+            # Exact match (O(1))
+            if name_lower in self._name_to_assessment:
+                item = self._name_to_assessment[name_lower]
+                if item not in results:
+                    results.append(item)
+                continue
+                
+            # Normalized match (O(1))
             name_norm = re.sub(r'[^a-z0-9]', '', name_lower)
-
-            best_match = None
-            best_score = 0
-
+            if name_norm in self._norm_to_assessment:
+                item = self._norm_to_assessment[name_norm]
+                if item not in results:
+                    results.append(item)
+                continue
+                
+            # Substring match fallback (O(N))
             for item in self._catalog:
-                item_lower = item.name.lower().strip()
-
-                # Exact match (highest priority)
-                if item_lower == name_lower:
-                    best_match = item
-                    best_score = 3
+                if name_lower in item.name_lower:
+                    if item not in results:
+                        results.append(item)
                     break
-
-                # Normalized match (strips hyphens, special chars)
-                item_norm = re.sub(r'[^a-z0-9]', '', item_lower)
-                if name_norm == item_norm and best_score < 2:
-                    best_match = item
-                    best_score = 2
-
-                # Substring match (lowest priority)
-                elif name_lower in item_lower and best_score < 1:
-                    best_match = item
-                    best_score = 1
-
-            if best_match and best_match not in results:
-                results.append(best_match)
 
         return results
 
