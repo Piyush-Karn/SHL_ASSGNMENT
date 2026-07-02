@@ -273,18 +273,19 @@ class LLMService:
         if response.status_code != 200:
             logger.warning(f"Mistral API failed with main key. Trying backup key... Error: {response.text}")
             
-            # Add backup key logic
-            backup_key = "MTMkprUCxmGVxxV5g1XOUDMlaoNloucu"
-            headers["Authorization"] = f"Bearer {backup_key}"
-            
-            response = requests.post(
-                "https://api.mistral.ai/v1/chat/completions",
-                headers=headers,
-                json=payload
-            )
-            
-            _last_mistral_call_time = time.time()
-            
+            if config.MISTRAL_BACKUP_KEY:
+                # Add a 1s delay just to be safe if the primary key failed
+                time.sleep(1.0)
+                headers["Authorization"] = f"Bearer {config.MISTRAL_BACKUP_KEY}"
+                
+                response = requests.post(
+                    "https://api.mistral.ai/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+                
+                _last_mistral_call_time = time.time()
+                
             if response.status_code != 200:
                 raise ValueError(f"Mistral API failed with both main and backup keys: {response.text}")
             
