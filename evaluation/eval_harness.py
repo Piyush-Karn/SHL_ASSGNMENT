@@ -317,6 +317,22 @@ TRACES = [
         "should_clarify_first": False,
         "should_end": True,
     },
+    {
+        "id": "C17",
+        "description": "Unseen: DevOps Engineer with refinement",
+        "messages_to_send": [
+            "We're hiring a DevOps Engineer responsible for Kubernetes, Docker, AWS and CI/CD pipelines.",
+            "Senior level. We also want a cognitive assessment.",
+            "Remove Docker. AWS is much more important. Looks good."
+        ],
+        "expected_assessments": [
+            "Amazon Web Services (AWS) Development (New)",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r"
+        ],
+        "should_clarify_first": True,
+        "should_end": True,
+    }
 ]
 
 
