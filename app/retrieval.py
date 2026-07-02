@@ -491,6 +491,7 @@ class RetrievalEngine:
         self,
         candidates: list[tuple[Assessment, float]],
         threshold: float = 0.82,
+        max_results: int | None = None
     ) -> list[tuple[Assessment, float]]:
         """
         Remove near-duplicate assessments, keeping the highest-scored one.
@@ -500,9 +501,7 @@ class RetrievalEngine:
         if not candidates:
             return candidates
 
-        # Group by name similarity
         selected = []
-        # Sort by score descending first to prioritize best matches
         sorted_candidates = sorted(candidates, key=lambda x: x[1], reverse=True)
         
         for assessment, score in sorted_candidates:
@@ -515,7 +514,8 @@ class RetrievalEngine:
                     break
             if not is_dup:
                 selected.append((assessment, score))
-
+                if max_results is not None and len(selected) >= max_results:
+                    break
         return selected
 
     # ------------------------------------------------------------------
@@ -582,8 +582,8 @@ class RetrievalEngine:
             boosted.sort(key=lambda x: x[1], reverse=True)
             candidates = boosted
 
-        # 8. Deduplicate near-similar names (frees slots for diverse items)
-        candidates = self._deduplicate_similar(candidates)
+        # 8. Deduplicate and take top K
+        candidates = self._deduplicate_similar(candidates, max_results=top_k)
 
         # 9. Inject must-include assessments
         if must_include_names:
