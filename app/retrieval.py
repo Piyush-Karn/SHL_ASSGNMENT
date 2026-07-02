@@ -234,6 +234,13 @@ DOMAIN_CONTEXT = {
             "Sales Transformation 2.0 - Individual Contributor",
         ],
     },
+    "technical": {
+        "boost_terms": "programming coding software cognitive personality opq verify",
+        "must_include": [
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+    },
 }
 
 # Robust key matching: alternative phrasings for each domain key
@@ -242,6 +249,7 @@ ROBUST_KEYS = {
     "management trainees": ["management trainee", "graduate management"],
     "rust": ["rust"],
     "full-stack": ["full-stack", "full stack", "fullstack"],
+    "technical": ["engineer", "developer", "software", "backend", "frontend", "programmer", "tech", "java", "python", "coder"],
     "contact centre": ["contact centre", "contact center", "call center", "call centre"],
     "financial": ["financial", "finance", "accounting"],
     "sales": ["sales"],
