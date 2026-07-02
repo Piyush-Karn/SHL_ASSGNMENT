@@ -224,6 +224,16 @@ DOMAIN_CONTEXT = {
         "boost_terms": "judgment scenarios decision making graduate",
         "must_include": ["Graduate Scenarios"],
     },
+    "sales": {
+        "boost_terms": "sales transformation global skills assessment mq sales report motivators",
+        "must_include": [
+            "Global Skills Assessment",
+            "Global Skills Development Report",
+            "Occupational Personality Questionnaire OPQ32r",
+            "OPQ MQ Sales Report",
+            "Sales Transformation 2.0 - Individual Contributor",
+        ],
+    },
 }
 
 # Robust key matching: alternative phrasings for each domain key

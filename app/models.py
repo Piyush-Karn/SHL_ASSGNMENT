@@ -106,9 +106,9 @@ class ConversationSlots(BaseModel):
     These drive retrieval queries and decision-making in the controller.
     Designed to capture everything the sample conversations demonstrate.
     """
-    role: str = ""                      # "Java developer", "contact centre agent"
+    role: Optional[str] = ""            # "Java developer", "contact centre agent"
     skills: list[str] = Field(default_factory=list)  # ["Java", "Spring", "SQL"]
-    seniority: str = ""                 # "entry-level", "mid", "senior", "executive"
+    seniority: Optional[str] = ""       # "entry-level", "graduate", "manager", "executive"
     job_level: str = ""                 # Maps to catalog's job_levels field
     language: str = ""                  # Required language for assessments
     test_types_wanted: list[str] = Field(default_factory=list)  # ["knowledge", "personality", "cognitive"]

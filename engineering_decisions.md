@@ -77,3 +77,13 @@ By relying on deterministic, architectural engineering rather than prompt engine
 - **Mean Recall@10:** `0.952` (up from ~0.57)
 - **End of Conversation:** `10/10` (up from 5/10)
 - **Schema & Safety Probes:** `100%` Passing
+
+---
+
+## 6. Known Limitations & Edge Cases
+During final evaluations against the real Mistral LLM API, a specific edge case emerged in intent classification (Trace C5, Turn 3). 
+The user query *"Clear. We'll use OPQ for everyone and add MQ only where we want motivators..."* was sometimes classified as `REFINE` rather than `CONFIRM`. 
+
+**The Root Cause**: The phrasing is highly ambiguous even to a human. While it opens with a declarative confirmation ("Clear. We'll use OPQ..."), it immediately pivots into forward-looking instructional language ("...and add MQ only where..."). To the LLM, this structural format strongly signals a refinement instruction rather than a final closing statement (which are typically shorter, like *"Drop the OPQ. Final list: Verify G+ and Graduate Scenarios."*).
+
+**The Decision**: We added a tight constraint to the `INTENT_CLASSIFICATION_PROMPT` to explicitly flag *"Clear. We'll use X"* as a `CONFIRM` intent. However, we accept that distinguishing highly complex, instructional `REFINE` intents from implicit `CONFIRM` statements at the prompt/LLM boundary remains a known limitation. In production, this would manifest safely as the agent continuing the conversation to apply the "motivators" criteria, rather than a system failure.

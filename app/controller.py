@@ -22,8 +22,9 @@ Key behaviors derived from analyzing all 10 sample conversations:
 
 from __future__ import annotations
 
-import logging
 import re
+import time
+import logging
 from typing import Optional
 
 from app.models import (
@@ -251,7 +252,7 @@ class ConversationController:
         self.retrieval = get_retrieval_engine()
         self.safety = get_safety_checker()
 
-    def process(self, messages: list[dict]) -> ChatResponse:
+    def process(self, messages: list[dict], timings: dict = None) -> ChatResponse:
         """
         Main entry point. Process conversation history and return response.
         
@@ -273,7 +274,9 @@ class ConversationController:
         turn_count = _count_turns(messages)
 
         # --- Step 1: Safety Check ---
+        t0 = time.time()
         is_safe, category, refusal_msg = self.safety.check(last_user_msg)
+        if timings is not None: timings["Safety"] = (time.time() - t0) * 1000
         if not is_safe:
             logger.info(f"Safety triggered: {category}")
             # For legal questions, don't end conversation (like C7)
@@ -289,7 +292,9 @@ class ConversationController:
                           if isinstance(m, dict) else {"role": m.role, "content": m.content}
                           for m in messages]
         
+        t0 = time.time()
         analysis = self.llm.analyze_user_input(messages_dicts)
+        if timings is not None: timings["Slot extraction"] = (time.time() - t0) * 1000
         slots_data = analysis.get("extracted_slots", {})
         clarify_reply = analysis.get("clarify_reply", "")
         
@@ -327,15 +332,15 @@ class ConversationController:
 
         # --- Step 4: Route to Handler ---
         if intent == "COMPARE":
-            return self._handle_comparison(messages_dicts, slots, last_user_msg)
+            return self._handle_comparison(messages_dicts, slots, last_user_msg, timings)
         elif intent == "CONFIRM":
-            return self._handle_confirmation(messages_dicts, slots)
+            return self._handle_confirmation(messages_dicts, slots, timings)
         elif intent == "REFINE":
-            return self._handle_refinement(messages_dicts, slots)
+            return self._handle_refinement(messages_dicts, slots, timings)
         elif intent == "RECOMMEND":
-            return self._handle_recommendation(messages_dicts, slots)
+            return self._handle_recommendation(messages_dicts, slots, timings)
         else:  # CLARIFY
-            return self._handle_clarification(messages_dicts, slots, turn_count, clarify_reply)
+            return self._handle_clarification(messages_dicts, slots, turn_count, clarify_reply, timings)
 
     def _classify_intent(
         self,
@@ -417,6 +422,7 @@ class ConversationController:
         slots: ConversationSlots,
         turn_count: int,
         clarify_reply: str,
+        timings: dict = None,
     ) -> ChatResponse:
         """
         Generate a clarifying question.
@@ -430,7 +436,7 @@ class ConversationController:
         
         if not missing_info:
             # Can't determine what's missing — just recommend
-            return self._handle_recommendation(messages, slots)
+            return self._handle_recommendation(messages, slots, timings)
         
         # Use the single-pass reply if provided
         reply = clarify_reply.strip()
@@ -447,6 +453,7 @@ class ConversationController:
         self,
         messages: list[dict],
         slots: ConversationSlots,
+        timings: dict = None,
     ) -> ChatResponse:
         """
         Generate assessment recommendations.
@@ -455,7 +462,9 @@ class ConversationController:
         language explanation, and returns structured recommendations.
         """
         # Retrieve assessments
+        t0 = time.time()
         assessments = self.retrieval.retrieve(slots, top_k=config.RERANK_TOP_K)
+        if timings is not None: timings["Retrieval"] = (time.time() - t0) * 1000
         
         if not assessments:
             return ChatResponse(
@@ -468,7 +477,9 @@ class ConversationController:
         assessments = assessments[:config.MAX_RECOMMENDATIONS]
         
         # Generate natural language response
+        t0 = time.time()
         reply = self.llm.generate_recommendation(messages, slots, assessments)
+        if timings is not None: timings["Prompt build & LLM"] = (time.time() - t0) * 1000
         
         # Explicitly append assessment names to fix conversational amnesia
         names_list = "\n".join([f"- {a.name}" for a in assessments])
@@ -487,6 +498,7 @@ class ConversationController:
         self,
         messages: list[dict],
         slots: ConversationSlots,
+        timings: dict = None,
     ) -> ChatResponse:
         """
         Handles explicit additions and merges them with standard retrieval.
@@ -532,12 +544,14 @@ class ConversationController:
             )
         
         # Generate response
+        t0 = time.time()
         reply = self.llm.generate_refinement(
             messages,
             ", ".join(prev_rec_names) if prev_rec_names else "previous list",
             changes_summary,
             assessments,
         )
+        if timings is not None: timings["Prompt build & LLM"] = (time.time() - t0) * 1000
         
         # Explicitly append assessment names to fix conversational amnesia
         names_list = "\n".join([f"- {a.name}" for a in assessments])
@@ -555,7 +569,8 @@ class ConversationController:
         self,
         messages: list[dict],
         slots: ConversationSlots,
-        last_msg: str,
+        last_user_msg: str,
+        timings: dict = None,
     ) -> ChatResponse:
         """
         Handle comparison requests between assessments.
@@ -564,7 +579,7 @@ class ConversationController:
         grounded comparison using only catalog data.
         """
         # Extract assessment names from the comparison request
-        assessment_names = self._extract_comparison_subjects(last_msg, slots)
+        assessment_names = self._extract_comparison_subjects(last_user_msg, slots)
         
         if len(assessment_names) < 2:
             # Can't identify two assessments to compare
@@ -598,6 +613,7 @@ class ConversationController:
         self,
         messages: list[dict],
         slots: ConversationSlots,
+        timings: dict = None,
     ) -> ChatResponse:
         """
         Handle user confirmation of recommendations.
@@ -612,7 +628,8 @@ class ConversationController:
         if not assessments:
             # Fall back to re-retrieving
             assessments = self.retrieval.retrieve(slots, top_k=config.RERANK_TOP_K)
-            assessments = assessments[:config.MAX_RECOMMENDATIONS]
+            
+        assessments = assessments[:config.MAX_RECOMMENDATIONS]
         
         reply = self.llm.generate_confirmation(messages, assessments)
         recommendations = [a.to_recommendation() for a in assessments]
@@ -632,11 +649,12 @@ class ConversationController:
         if not messages: 
             return []
             
-        # Get the text of the last message sent by the assistant
+        # Get the text of the last message sent by the assistant that actually had recommendations
         last_agent_message = ""
         for msg in reversed(messages):
-            if msg.get("role") == "assistant":
-                last_agent_message = msg.get("content", "")
+            content = msg.get("content", "")
+            if msg.get("role") == "assistant" and "Recommended Assessments:" in content:
+                last_agent_message = content
                 break
                 
         if not last_agent_message:

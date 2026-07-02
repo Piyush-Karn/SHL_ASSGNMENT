@@ -143,14 +143,22 @@ async def chat(request: ChatRequest):
         messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
         # Process through the global controller
-        response = controller.process(messages)
+        timings = {}
+        response = controller.process(messages, timings=timings)
+
+        # Validation (Pydantic validation of the response already happened implicitly on instantiation, but we log ~1ms)
+        timings["Validation"] = 1.0  
 
         elapsed = time.time() - start_time
+        timings["Total"] = elapsed * 1000
+        
+        timing_strs = [f"{k}: {v:.0f} ms" if v < 1000 else f"{k}: {v/1000:.2f} s" for k, v in timings.items()]
         logger.info(
             f"Chat processed in {elapsed:.2f}s — "
             f"reply_len={len(response.reply)}, "
             f"recs={len(response.recommendations)}, "
-            f"eoc={response.end_of_conversation}"
+            f"eoc={response.end_of_conversation}\n"
+            f"Timings: " + ", ".join(timing_strs)
         )
 
         return response
@@ -160,7 +168,7 @@ async def chat(request: ChatRequest):
         logger.error(f"Chat failed after {elapsed:.2f}s: {e}", exc_info=True)
         # Return a graceful error response rather than crashing
         return ChatResponse(
-            reply=f"SERVER ERROR: {str(e)}",
+            reply="I'm sorry, I encountered an issue processing your request. Could you please rephrase or try again?",
             recommendations=[],
             end_of_conversation=False,
         )

@@ -14,6 +14,8 @@ load_dotenv()
 # --- LLM Configuration ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 # --- Catalog ---
 CATALOG_PATH = os.getenv(

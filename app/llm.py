@@ -20,6 +20,8 @@ import json
 import logging
 import os
 import re
+import time
+import requests
 from typing import Optional
 
 import google.generativeai as genai
@@ -60,6 +62,7 @@ from app.prompts import (
 
 logger = logging.getLogger(__name__)
 
+_last_mistral_call_time = 0
 
 class LLMService:
     """
@@ -86,13 +89,6 @@ class LLMService:
         max_tokens: int = 1024,
         json_mode: bool = False,
     ) -> str:
-        """
-        Make a Gemini API call.
-        
-        Low temperature (0.3) for consistent, predictable outputs.
-        Higher temperature would make responses more creative but less reliable
-        for behavior probes.
-        """
         # --- Mock LLM Mode ---
         if os.getenv("MOCK_LLM", "False").lower() == "true":
             if not json_mode:
@@ -177,13 +173,13 @@ class LLMService:
                 
             # Fallback
             return '{"intent": "RECOMMEND", "extracted_slots": {"role": "general", "seniority": "entry-level"}}'
-        
+
         # --- Cache Logic for Dev/Eval Speed ---
         import hashlib
         
-        CACHE_FILE = "evaluation/llm_cache.json"
+        provider = config.LLM_PROVIDER
+        CACHE_FILE = f"evaluation/{provider}_cache.json"
         
-        # Load cache from disk if it exists
         cache = {}
         if os.path.exists(CACHE_FILE):
             try:
@@ -192,13 +188,91 @@ class LLMService:
             except Exception as e:
                 logger.warning(f"Failed to load cache: {e}")
                 
-        # Hash the prompt for cache key
         cache_key = hashlib.md5(f"{prompt}_{temperature}_{json_mode}".encode("utf-8")).hexdigest()
         
         if cache_key in cache:
-            logger.debug("Cache hit for LLM prompt.")
+            logger.debug(f"Cache hit for {provider} prompt.")
             return cache[cache_key]
+
+        # Route to correct provider
+        if provider == "mistral":
+            response_text = self._call_mistral(prompt, temperature, max_tokens, json_mode)
+        else:
+            response_text = self._call_gemini(prompt, temperature, max_tokens, json_mode)
             
+        # --- Save to Cache ---
+        cache[cache_key] = response_text
+        try:
+            os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
+            with open(CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to write cache: {e}")
+            
+        return response_text
+
+    def _call_mistral(
+        self,
+        prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+        json_mode: bool = False,
+    ) -> str:
+        global _last_mistral_call_time
+        if not config.MISTRAL_API_KEY:
+            raise ValueError("MISTRAL_API_KEY not set")
+
+        # Enforce 3-second delay for Mistral 1 RPS limit
+        now = time.time()
+        elapsed = now - _last_mistral_call_time
+        if elapsed < 3.0:
+            time.sleep(3.0 - elapsed)
+
+        headers = {
+            "Authorization": f"Bearer {config.MISTRAL_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "mistral-large-latest",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+
+        response = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers=headers,
+            json=payload
+        )
+        
+        _last_mistral_call_time = time.time()
+        
+        if response.status_code != 200:
+            raise ValueError(f"Mistral API failed: {response.text}")
+            
+        return response.json()["choices"][0]["message"]["content"]
+
+    def _call_gemini(
+        self,
+        prompt: str,
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+        json_mode: bool = False,
+    ) -> str:
+        """
+        Make a Gemini API call.
+        
+        Low temperature (0.3) for consistent, predictable outputs.
+        Higher temperature would make responses more creative but less reliable
+        for behavior probes.
+        """
         try:
             gen_config_kwargs = {
                 "temperature": temperature,
@@ -213,35 +287,20 @@ class LLMService:
                 safety_settings=_SAFETY_SETTINGS,
             )
 
-            # Detect safety block early and raise a descriptive error so the
-            # caller's except-branch returns a fallback immediately rather than
-            # letting response.text raise a confusing ValueError that looks like
-            # a timeout to the evaluator.
             if not response.candidates:
                 raise ValueError(
                     "Gemini returned no candidates — possible safety block even "
                     "with BLOCK_NONE settings (check quota or model availability)."
                 )
             finish_reason = response.candidates[0].finish_reason
-            # finish_reason 2 == SAFETY in the Gemini protobuf enum
             if finish_reason == 2:
                 raise ValueError(
                     f"Gemini blocked this prompt (finish_reason=SAFETY). "
                     f"Prompt prefix: {prompt[:120]!r}"
                 )
 
-            response_text = response.text.strip()
+            return response.text.strip()
             
-            # --- Save to Cache ---
-            cache[cache_key] = response_text
-            try:
-                os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-                with open(CACHE_FILE, "w", encoding="utf-8") as f:
-                    json.dump(cache, f, indent=2)
-            except Exception as e:
-                logger.warning(f"Failed to write cache: {e}")
-                
-            return response_text
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             raise
@@ -258,6 +317,9 @@ class LLMService:
         1. Classify the intent as one of: CLARIFY, RECOMMEND, REFINE, COMPARE, CONFIRM, OFF_TOPIC.
         2. Extract any specific job roles, skills, or seniority levels mentioned.
         3. If the intent is CLARIFY, generate a conversational reply asking for the missing info (e.g. seniority or skills). For all other intents, you can leave clarify_reply blank.
+        
+        CRITICAL INTENT RULES:
+        - If the user's message sounds like they are making a final decision (e.g., "Clear. We'll use X" or "That's perfect, we will go with these"), classify the intent as CONFIRM, even if they mention specific items. This means the conversation is ending.
         
         Return ONLY valid JSON in this exact format:
         {{
@@ -280,7 +342,31 @@ class LLMService:
             if cleaned.startswith("```"):
                 cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
                 cleaned = re.sub(r"\s*```$", "", cleaned)
-            return json.loads(cleaned)
+            data = json.loads(cleaned)
+            
+            # Normalization: Mistral sometimes outputs wrong types for JSON slots
+            slots = data.get("extracted_slots", {})
+            if slots is None:
+                slots = {}
+                data["extracted_slots"] = slots
+                
+            # Convert None to defaults
+            if slots.get("role") is None:
+                slots["role"] = ""
+            if slots.get("seniority") is None:
+                slots["seniority"] = ""
+            if slots.get("skills") is None:
+                slots["skills"] = []
+                
+            # Fix lists passed as strings or strings passed as lists
+            if isinstance(slots.get("role"), list):
+                slots["role"] = ", ".join(str(x) for x in slots["role"])
+            if isinstance(slots.get("seniority"), list):
+                slots["seniority"] = ", ".join(str(x) for x in slots["seniority"])
+            if isinstance(slots.get("skills"), str):
+                slots["skills"] = [s.strip() for s in slots["skills"].split(",") if s.strip()]
+                
+            return data
         except Exception as e:
             logger.error(f"Failed to parse analyze_user_input JSON: {e}")
             logger.debug(f"Raw response: {response_text[:500]}")
@@ -310,6 +396,25 @@ class LLMService:
                 cleaned = re.sub(r"\s*```$", "", cleaned)
 
             data = json.loads(cleaned)
+            if data is None:
+                data = {}
+                
+            # Convert None to defaults
+            if data.get("role") is None:
+                data["role"] = ""
+            if data.get("seniority") is None:
+                data["seniority"] = ""
+            if data.get("skills") is None:
+                data["skills"] = []
+                
+            # Fix lists passed as strings or strings passed as lists
+            if isinstance(data.get("role"), list):
+                data["role"] = ", ".join(str(x) for x in data["role"])
+            if isinstance(data.get("seniority"), list):
+                data["seniority"] = ", ".join(str(x) for x in data["seniority"])
+            if isinstance(data.get("skills"), str):
+                data["skills"] = [s.strip() for s in data["skills"].split(",") if s.strip()]
+                
             return ConversationSlots(**data)
 
         except json.JSONDecodeError as e:
