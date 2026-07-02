@@ -273,6 +273,50 @@ TRACES = [
         "should_clarify_first": False,
         "should_end": True,
     },
+    {
+        "id": "C14",
+        "description": "Unseen: Senior Marketing Executive",
+        "messages_to_send": [
+            "Looking for assessments for a Senior Marketing Executive. Needs marketing knowledge.",
+            "I approve these.",
+        ],
+        "expected_assessments": [
+            "Marketing (New)",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+        "should_clarify_first": False,
+        "should_end": True,
+    },
+    {
+        "id": "C15",
+        "description": "Unseen: Entry-Level Retail Sales",
+        "messages_to_send": [
+            "We are volume hiring entry-level retail sales agents. Need a simulation.",
+            "Looks perfect.",
+        ],
+        "expected_assessments": [
+            "Retail Sales and Service Simulation",
+            "Entry Level Sales Solution",
+        ],
+        "should_clarify_first": False,
+        "should_end": True,
+    },
+    {
+        "id": "C16",
+        "description": "Unseen: HR Business Partner",
+        "messages_to_send": [
+            "Hiring a mid-level Human Resources Business Partner. What do you recommend?",
+            "Confirmed.",
+        ],
+        "expected_assessments": [
+            "Human Resources (New)",
+            "SHL Verify Interactive G+",
+            "Occupational Personality Questionnaire OPQ32r",
+        ],
+        "should_clarify_first": False,
+        "should_end": True,
+    },
 ]
 
 

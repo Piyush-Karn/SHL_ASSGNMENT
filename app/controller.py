@@ -171,11 +171,13 @@ def _is_confirmation(message: str) -> bool:
     confirm_patterns = [
         r"\bperfect\b",
         r"\bconfirm(ed)?\b",
+        r"\bapprove(d)?\b",
         r"\block(ing|ed)?\s*(it)?\s*(in)?\b",
         r"\bthat('s| is)?\s*(good|great|fine|what we need|exactly)",
         r"\bthat\s+works\b",
         r"\bthat\s+covers\s+it\b",
         r"\bgood\s*(to\s+go)?\b",
+        r"\blooks?\s+(good|perfect|great|fine)\b",
         r"\byes\b.*(go\s+ahead|proceed|finalize)",
         r"\bkeep\b.*(as.is|the\s+list|shortlist)",
         r"\bfinal\s*(list|shortlist|battery)\b",
@@ -363,17 +365,12 @@ class ConversationController:
             return "COMPARE"
         
         # Check for confirmation
-        if _is_confirmation(last_msg):
-            # Only treat as confirmation if we've already given recommendations
-            has_prev_recs = self._has_previous_recommendations(messages)
-            if has_prev_recs:
-                return "CONFIRM"
+        if _is_confirmation(last_msg) and turn_count > 1:
+            return "CONFIRM"
         
         # Check for refinement
-        if _is_refinement_request(last_msg):
-            has_prev_recs = self._has_previous_recommendations(messages)
-            if has_prev_recs:
-                return "REFINE"
+        if _is_refinement_request(last_msg) and turn_count > 1:
+            return "REFINE"
         
         # --- Decision: Clarify or Recommend? ---
         
